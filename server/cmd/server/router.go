@@ -378,7 +378,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 			})
 
 			// Projects V2
-			r.Route("/api/projects-v2", func(r chi.Router) {
+			r.Route("/api/v2/projects", func(r chi.Router) {
 				r.Post("/", h.CreateProjectV2)
 				r.Get("/", h.ListProjectsV2)
 				r.Route("/{projectId}", func(r chi.Router) {
