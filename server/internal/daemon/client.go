@@ -330,6 +330,13 @@ func (c *Client) SendProjectMessage(ctx context.Context, projectID, role, conten
 	}, nil)
 }
 
+// UpdateProjectStatus updates a project's status via the daemon API.
+func (c *Client) UpdateProjectStatus(ctx context.Context, projectID, status string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/projects/%s/status", projectID), map[string]any{
+		"status": status,
+	}, nil)
+}
+
 // GetPendingProjects fetches projects assigned to this runtime that need attention.
 func (c *Client) GetPendingProjects(ctx context.Context, runtimeID string) ([]ProjectData, error) {
 	var projects []ProjectData

@@ -152,6 +152,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 		r.Get("/runtimes/{runtimeId}/projects", h.ListRuntimeProjects)
 		r.Get("/projects/{projectId}/messages", h.DaemonGetProjectMessages)
 		r.Post("/projects/{projectId}/messages", h.DaemonSendProjectMessage)
+		r.Post("/projects/{projectId}/status", h.DaemonUpdateProjectStatus)
 	})
 
 	// Protected API routes

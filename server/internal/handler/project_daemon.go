@@ -169,3 +169,25 @@ func (h *Handler) DaemonSendProjectMessage(w http.ResponseWriter, r *http.Reques
 
 	writeJSON(w, http.StatusCreated, m)
 }
+
+// DaemonUpdateProjectStatus — POST /api/daemon/projects/{projectId}/status
+func (h *Handler) DaemonUpdateProjectStatus(w http.ResponseWriter, r *http.Request) {
+projectID := chi.URLParam(r, "projectId")
+
+var req struct {
+Status string `json:"status"`
+}
+if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Status == "" {
+writeError(w, http.StatusBadRequest, "status is required")
+return
+}
+
+const updateSQL = `UPDATE project_v2 SET status = $1, updated_at = NOW() WHERE id = $2`
+tag, err := h.DB.Exec(r.Context(), updateSQL, req.Status, projectID)
+if err != nil || tag.RowsAffected() == 0 {
+writeError(w, http.StatusNotFound, "project not found")
+return
+}
+
+writeJSON(w, http.StatusOK, map[string]string{"status": req.Status})
+}
