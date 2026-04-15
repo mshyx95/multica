@@ -13,6 +13,10 @@ import {
   ChevronRight,
   Files,
   ListTodo,
+  BookOpen,
+  Eye,
+  Pencil,
+  Save,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
@@ -29,6 +33,7 @@ import {
   CollapsibleContent,
 } from "@multica/ui/components/ui/collapsible";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import { toast } from "sonner";
 import type {
   ProjectV2,
@@ -60,7 +65,7 @@ const AGENT_ROLES: AgentRoleDef[] = [
   { role: "evaluator", label: "Evaluator", defaultModel: "gpt-5.3-codex" },
 ];
 
-type ContentTab = "terminal" | "files" | "tasks";
+type ContentTab = "brief" | "terminal" | "files" | "tasks";
 
 // ─── File category config ───────────────────────────────────────────────────
 
@@ -357,6 +362,147 @@ function FileViewer({
   );
 }
 
+// ─── Main Tab: Brief Editor ─────────────────────────────────────────────────
+
+function BriefEditor({
+  project,
+  onSave,
+}: {
+  project: ProjectV2;
+  onSave: (data: { description: string; goals: string }) => Promise<void>;
+}) {
+  const [description, setDescription] = useState(project.description ?? "");
+  const [goals, setGoals] = useState(project.goals ?? "");
+  const [preview, setPreview] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const isReadOnly = project.status !== "draft";
+
+  // Sync from project data when it changes externally
+  useEffect(() => {
+    if (!dirty) {
+      setDescription(project.description ?? "");
+      setGoals(project.goals ?? "");
+    }
+  }, [project.description, project.goals, dirty]);
+
+  const handleSave = useCallback(async () => {
+    setSaving(true);
+    try {
+      await onSave({ description, goals });
+      setDirty(false);
+      toast.success("Brief saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }, [description, goals, onSave]);
+
+  if (isReadOnly) {
+    // Read-only view for non-draft projects
+    return (
+      <div className="flex h-full flex-col min-h-0 overflow-auto">
+        <div className="space-y-4 p-1">
+          {/* Description */}
+          <div>
+            <h3 className="text-xs font-semibold text-muted-foreground mb-2">Description</h3>
+            {description ? (
+              <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg border bg-background p-4">
+                <Markdown>{description}</Markdown>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">No description</p>
+            )}
+          </div>
+
+          {/* Goals */}
+          <div>
+            <h3 className="text-xs font-semibold text-muted-foreground mb-2">Goals</h3>
+            {goals ? (
+              <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg border bg-background p-4">
+                <Markdown>{goals}</Markdown>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">No goals defined</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Editable view for draft projects
+  return (
+    <div className="flex h-full flex-col min-h-0">
+      {/* Toolbar */}
+      <div className="flex items-center gap-2 mb-3 shrink-0">
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={() => setPreview(!preview)}
+          className="gap-1"
+        >
+          {preview ? <Pencil className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+          {preview ? "Edit" : "Preview"}
+        </Button>
+        <Button
+          size="xs"
+          onClick={handleSave}
+          disabled={!dirty || saving}
+          className="gap-1"
+        >
+          <Save className="h-3 w-3" />
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        {dirty && (
+          <span className="text-[10px] text-muted-foreground">Unsaved changes</span>
+        )}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-h-0 overflow-auto space-y-4">
+        {/* Description */}
+        <div className="flex flex-col min-h-0">
+          <h3 className="text-xs font-semibold text-muted-foreground mb-1.5">Description</h3>
+          {preview ? (
+            <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg border bg-background p-4">
+              <Markdown>{description || "*No description yet*"}</Markdown>
+            </div>
+          ) : (
+            <Textarea
+              value={description}
+              onChange={(e) => { setDescription(e.target.value); setDirty(true); }}
+              className="min-h-[200px] resize-none font-mono text-sm"
+              placeholder="Describe your project in detail. Use markdown…"
+              onBlur={() => { if (dirty) handleSave(); }}
+            />
+          )}
+        </div>
+
+        {/* Goals */}
+        <div className="flex flex-col min-h-0">
+          <h3 className="text-xs font-semibold text-muted-foreground mb-1.5">Goals</h3>
+          {preview ? (
+            <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg border bg-background p-4">
+              <Markdown>{goals || "*No goals yet*"}</Markdown>
+            </div>
+          ) : (
+            <Textarea
+              value={goals}
+              onChange={(e) => { setGoals(e.target.value); setDirty(true); }}
+              className="min-h-[120px] resize-none font-mono text-sm"
+              placeholder="What should this project accomplish? Use markdown…"
+              onBlur={() => { if (dirty) handleSave(); }}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Tab: Task Tracker ─────────────────────────────────────────────────
 
 function TaskTracker({ files }: { files: ProjectFile[] }) {
@@ -446,7 +592,7 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
   const wsId = useWorkspaceId();
 
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<ContentTab>("terminal");
+  const [activeTab, setActiveTab] = useState<ContentTab>("brief");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>("");
   const [fileLoading, setFileLoading] = useState(false);
@@ -592,6 +738,11 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
     }
   }, [projectId, qc, nav]);
 
+  const handleSaveBrief = useCallback(async (data: { description: string; goals: string }) => {
+    await api.updateProjectV2(projectId, data);
+    qc.invalidateQueries({ queryKey: ["projects-v2", projectId] });
+  }, [projectId, qc]);
+
   // ── Loading state ──
 
   if (projectLoading || !project) {
@@ -615,6 +766,7 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
 
   // ── Tab bar items ──
   const tabs: { id: ContentTab; label: string; icon: React.ReactNode }[] = [
+    { id: "brief", label: "Brief", icon: <BookOpen className="h-3.5 w-3.5" /> },
     { id: "terminal", label: "Terminal", icon: <TerminalIcon className="h-3.5 w-3.5" /> },
     { id: "files", label: "Files", icon: <Files className="h-3.5 w-3.5" /> },
     { id: "tasks", label: "Tasks", icon: <ListTodo className="h-3.5 w-3.5" /> },
@@ -741,55 +893,50 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
 
         {/* ── Main content area ── */}
         <div className="flex flex-1 min-w-0 flex-col">
-          {isDraft ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              Deploy the project to start agents
-            </div>
-          ) : (
-            <>
-              {/* Tab bar */}
-              <div className="flex shrink-0 items-center gap-1 border-b px-4 h-10">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                      activeTab === tab.id
-                        ? "bg-muted text-foreground"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                    }`}
-                  >
-                    {tab.icon}
-                    {tab.label}
-                  </button>
-                ))}
-                <span className="ml-auto text-[10px] text-muted-foreground font-mono">
-                  {activeTab === "terminal" && terminalSessionName}
-                  {activeTab === "files" && selectedFile}
-                </span>
-              </div>
+          {/* Tab bar — always visible */}
+          <div className="flex shrink-0 items-center gap-1 border-b px-4 h-10">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  activeTab === tab.id
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            ))}
+            <span className="ml-auto text-[10px] text-muted-foreground font-mono">
+              {activeTab === "terminal" && terminalSessionName}
+              {activeTab === "files" && selectedFile}
+            </span>
+          </div>
 
-              {/* Tab content */}
-              <div className="flex-1 min-h-0 p-4">
-                {activeTab === "terminal" && (
-                  <TerminalView
-                    sessionName={terminalSessionName}
-                    selectedAgent={selectedAgent}
-                  />
-                )}
-                {activeTab === "files" && (
-                  <FileViewer
-                    selectedFile={selectedFile}
-                    fileContent={fileContent}
-                    isLoading={fileLoading}
-                  />
-                )}
-                {activeTab === "tasks" && (
-                  <TaskTracker files={files} />
-                )}
-              </div>
-            </>
-          )}
+          {/* Tab content */}
+          <div className="flex-1 min-h-0 p-4">
+            {activeTab === "brief" && project && (
+              <BriefEditor project={project} onSave={handleSaveBrief} />
+            )}
+            {activeTab === "terminal" && (
+              <TerminalView
+                sessionName={terminalSessionName}
+                selectedAgent={selectedAgent}
+              />
+            )}
+            {activeTab === "files" && (
+              <FileViewer
+                selectedFile={selectedFile}
+                fileContent={fileContent}
+                isLoading={fileLoading}
+              />
+            )}
+            {activeTab === "tasks" && (
+              <TaskTracker files={files} />
+            )}
+          </div>
         </div>
       </div>
     </div>
