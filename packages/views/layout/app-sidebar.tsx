@@ -27,6 +27,7 @@ import {
   SquarePen,
   CircleUser,
   FolderKanban,
+  Rocket,
   Ellipsis,
   PinOff,
   Zap,
@@ -77,6 +78,7 @@ const personalNav = [
 const workspaceNav = [
   { href: "/issues", label: "Issues", icon: ListTodo },
   { href: "/projects", label: "Projects", icon: FolderKanban },
+  { href: "/projects-v2", label: "Projects V2", icon: Rocket },
   { href: "/autopilots", label: "Autopilot", icon: Zap },
   { href: "/agents", label: "Agents", icon: Bot },
 ];

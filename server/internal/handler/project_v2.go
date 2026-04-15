@@ -105,6 +105,13 @@ func (h *Handler) CreateProjectV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Default JSONB fields to avoid NULL constraint violations
+	skills := derefOr(req.Skills, "[]")
+	agentRules := derefOr(req.AgentRules, "{}")
+	config := derefOr(req.Config, "{}")
+	description := derefOr(req.Description, "")
+	goals := derefOr(req.Goals, "")
+
 	const insertSQL = `
 		INSERT INTO project_v2 (workspace_id, name, description, goals, skills, agent_rules, status, config, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, 'draft', $7, $8)
@@ -112,7 +119,7 @@ func (h *Handler) CreateProjectV2(w http.ResponseWriter, r *http.Request) {
 		          trd_content, plan_content, config, created_by, created_at, updated_at`
 
 	row := h.DB.QueryRow(r.Context(), insertSQL,
-		workspaceID, req.Name, req.Description, req.Goals, req.Skills, req.AgentRules, req.Config, userID,
+		workspaceID, req.Name, description, goals, skills, agentRules, config, userID,
 	)
 
 	p, err := scanProjectV2(row)
@@ -583,4 +590,11 @@ func scanProjectMessage(rows interface{ Scan(dest ...any) error }) (projectMessa
 	}
 	m.CreatedAt = createdAt.Format(time.RFC3339)
 	return m, nil
+}
+
+func derefOr(s *string, fallback string) string {
+	if s == nil {
+		return fallback
+	}
+	return *s
 }
