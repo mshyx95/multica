@@ -205,6 +205,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 
 		// Terminal WebSocket (machine-level tmux, no workspace context)
 		r.Get("/api/terminal/{sessionName}", h.TerminalWS)
+		r.Get("/api/terminal-windows/{sessionName}", h.ListTmuxWindows)
 
 		r.Route("/api/tokens", func(r chi.Router) {
 			r.Get("/", h.ListPersonalAccessTokens)
@@ -395,6 +396,8 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 					r.Get("/messages", h.ListProjectMessages)
 					r.Post("/messages", h.SendProjectMessage)
 					r.Get("/subtasks", h.ListSubtasks)
+					r.Get("/files", h.ListProjectFiles)
+					r.Get("/files/*", h.ReadProjectFile)
 				})
 			})
 		})

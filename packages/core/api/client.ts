@@ -70,6 +70,9 @@ import type {
   ProjectAgent,
   ProjectMessage,
   Subtask,
+  ProjectFile,
+  ProjectFileContent,
+  TmuxWindow,
 } from "../types";
 import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
@@ -954,5 +957,17 @@ export class ApiClient {
 
   async deleteProjectV2(id: string): Promise<void> {
     await this.fetch(`/api/v2/projects/${id}`, { method: "DELETE" });
+  }
+
+  async listProjectFiles(projectId: string): Promise<ProjectFile[]> {
+    return this.fetch(`/api/v2/projects/${projectId}/files`);
+  }
+
+  async readProjectFile(projectId: string, filePath: string): Promise<ProjectFileContent> {
+    return this.fetch(`/api/v2/projects/${projectId}/files/${encodeURIComponent(filePath)}`);
+  }
+
+  async listTmuxWindows(sessionName: string): Promise<TmuxWindow[]> {
+    return this.fetch(`/api/terminal-windows/${encodeURIComponent(sessionName)}`);
   }
 }

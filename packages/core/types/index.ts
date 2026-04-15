@@ -46,6 +46,9 @@ export type {
   Subtask,
   CreateProjectV2Request,
   DeployProjectV2Request,
+  ProjectFile,
+  ProjectFileContent,
+  TmuxWindow,
 } from "./project-v2";
 export type {
   Autopilot,

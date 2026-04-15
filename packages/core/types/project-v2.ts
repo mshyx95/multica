@@ -78,3 +78,43 @@ export interface CreateProjectV2Request {
 export interface DeployProjectV2Request {
   runtime_id: string;
 }
+
+export interface ProjectFile {
+  path: string;
+  name: string;
+  size: number;
+  is_dir: boolean;
+  mod_time: string;
+  category: string;
+}
+
+export interface ProjectFileContent {
+  path: string;
+  content: string;
+}
+
+export interface TmuxWindow {
+  name: string;
+  active: boolean;
+  status: string;
+}
+
+export interface ProjectFile {
+  path: string;
+  name: string;
+  size: number;
+  is_dir: boolean;
+  mod_time: string;
+  category: "plan" | "task" | "report" | "state" | "other";
+}
+
+export interface ProjectFileContent {
+  path: string;
+  content: string;
+}
+
+export interface TmuxWindow {
+  name: string;
+  active: boolean;
+  status: "busy" | "idle" | "dead";
+}
