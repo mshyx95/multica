@@ -41,7 +41,7 @@ func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume="+opts.ResumeSessionID)
 	}
-	args = append(args, "-p", prompt)
+	args = append(args, "-i", prompt)
 
 	cmd := exec.CommandContext(runCtx, execPath, args...)
 	if opts.Cwd != "" {

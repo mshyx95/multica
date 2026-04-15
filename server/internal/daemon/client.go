@@ -299,12 +299,12 @@ type ProjectMessageData struct {
 
 // ProjectData represents a project assigned to a runtime.
 type ProjectData struct {
-	ID     string         `json:"id"`
-	Name   string         `json:"name"`
-	Goals  string         `json:"goals"`
-	Skills string         `json:"skills"`
-	Status string         `json:"status"`
-	Config map[string]any `json:"config"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Goals  string `json:"goals"`
+	Skills string `json:"skills"`
+	Status string `json:"status"`
+	Config string `json:"config"`
 }
 
 // ---------------------------------------------------------------------------

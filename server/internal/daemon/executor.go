@@ -223,7 +223,7 @@ func (d *Daemon) setupWorktrees(ctx context.Context, cfg ExecutionConfig) error 
 
 // buildCopilotCmd constructs the copilot CLI command string.
 func buildCopilotCmd(copilotPath, prompt, model, effort, cwd string) string {
-	cmd := fmt.Sprintf("cd %s && %s -p %q --output-format json --allow-all",
+	cmd := fmt.Sprintf("cd %s && %s -i %q --allow-all",
 		shellEscape(cwd), copilotPath, prompt)
 	if model != "" {
 		cmd += fmt.Sprintf(" --model %s", model)

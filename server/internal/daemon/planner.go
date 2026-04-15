@@ -69,8 +69,9 @@ func (d *Daemon) startPlanner(ctx context.Context, projectID, projectName, goals
 		return fmt.Errorf("copilot agent not configured")
 	}
 
-	// Build the copilot command.
-	cmd := fmt.Sprintf("%s -p %q --output-format json --allow-all --model claude-opus-4.6-1m",
+	// Build the copilot command — use interactive mode (-i) so the session stays open
+	// for multi-round conversation. Use text output (not json) for readability.
+	cmd := fmt.Sprintf("%s -i %q --allow-all --model claude-opus-4.6-1m",
 		copilotEntry.Path, prompt)
 
 	// Rename default window and send the command.
@@ -110,7 +111,7 @@ func (d *Daemon) plannerMessageLoop(ctx context.Context, deployment *ProjectDepl
 				}
 			}
 
-			// 3. Capture planner output and report back.
+			// 3. Capture planner terminal output and relay new text to server.
 			capture, err := tmuxCapture(deployment.SessionName, plannerWindow)
 			if err != nil {
 				continue
@@ -118,14 +119,20 @@ func (d *Daemon) plannerMessageLoop(ctx context.Context, deployment *ProjectDepl
 
 			if capture != lastCapture && capture != "" {
 				newContent := capture
-				if lastCapture != "" && strings.Contains(capture, lastCapture) {
-					newContent = strings.TrimPrefix(capture, lastCapture)
-					newContent = strings.TrimSpace(newContent)
+				if lastCapture != "" {
+					idx := strings.LastIndex(capture, lastCapture)
+					if idx >= 0 {
+						newContent = capture[idx+len(lastCapture):]
+					}
 				}
+				newContent = strings.TrimSpace(newContent)
 
-				if newContent != "" {
+				// Filter out shell noise — only relay substantive text
+				if newContent != "" && !isShellNoise(newContent) {
 					if err := d.client.SendProjectMessage(ctx, deployment.ProjectID, "planner", newContent, "planning"); err != nil {
 						d.logger.Debug("send project message failed", "error", err)
+					} else {
+						d.logger.Info("planner response relayed", "project_id", deployment.ProjectID, "length", len(newContent))
 					}
 				}
 				lastCapture = capture
@@ -154,6 +161,7 @@ func (d *Daemon) projectLoop(ctx context.Context) {
 			for _, rid := range runtimeIDs {
 				projects, err := d.client.GetPendingProjects(ctx, rid)
 				if err != nil {
+					d.logger.Debug("get pending projects failed", "runtime_id", rid, "error", err)
 					continue
 				}
 
@@ -161,6 +169,8 @@ func (d *Daemon) projectLoop(ctx context.Context) {
 					if _, exists := deployments[proj.ID]; exists {
 						continue
 					}
+
+					d.logger.Info("found pending project", "project_id", proj.ID, "name", proj.Name, "status", proj.Status)
 
 					if proj.Status == "planning" {
 						if err := d.startPlanner(ctx, proj.ID, proj.Name, proj.Goals, proj.Skills); err != nil {
@@ -182,4 +192,20 @@ func (d *Daemon) projectLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// isShellNoise returns true if the captured text is just shell prompts or trivial output.
+func isShellNoise(s string) bool {
+s = strings.TrimSpace(s)
+if s == "" {
+return true
+}
+for _, line := range strings.Split(s, "\n") {
+line = strings.TrimSpace(line)
+if line == "" || strings.HasSuffix(line, "$ ") || strings.HasSuffix(line, "$") {
+continue
+}
+return false
+}
+return true
 }
