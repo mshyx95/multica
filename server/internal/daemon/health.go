@@ -7,12 +7,15 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 )
+
+const projectsBaseDir = "/mnt2/yuxuanhu/multica/projects"
 
 // HealthResponse is returned by the daemon's local health endpoint.
 type HealthResponse struct {
@@ -166,6 +169,8 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 		json.NewEncoder(w).Encode(result)
 	})
 
+	mux.HandleFunc("/files/", d.handleFiles)
+
 	srv := &http.Server{Handler: mux}
 
 	go func() {
@@ -176,6 +181,177 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	d.logger.Info("health server listening", "addr", ln.Addr().String())
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		d.logger.Warn("health server error", "error", err)
+	}
+}
+
+// handleFiles serves project files from the daemon's local filesystem.
+// Routes:
+//
+//	GET  /files/{projectId}/list             → list all files
+//	GET  /files/{projectId}/read/{path...}   → read a single file
+//	PUT  /files/{projectId}/write/{path...}  → write a single file
+func (d *Daemon) handleFiles(w http.ResponseWriter, r *http.Request) {
+	// Strip leading "/files/" and split into projectId / action / [path...]
+	trimmed := strings.TrimPrefix(r.URL.Path, "/files/")
+	parts := strings.SplitN(trimmed, "/", 3)
+	if len(parts) < 2 {
+		http.Error(w, "invalid path: expected /files/{projectId}/{action}[/path]", http.StatusBadRequest)
+		return
+	}
+	projectID := parts[0]
+	action := parts[1]
+	filePath := ""
+	if len(parts) > 2 {
+		filePath = parts[2]
+	}
+
+	baseDir := filepath.Join(projectsBaseDir, projectID)
+
+	switch action {
+	case "list":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		d.handleFilesList(w, baseDir)
+	case "read":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if filePath == "" {
+			http.Error(w, "file path is required", http.StatusBadRequest)
+			return
+		}
+		d.handleFilesRead(w, baseDir, filePath)
+	case "write":
+		if r.Method != http.MethodPut {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if filePath == "" {
+			http.Error(w, "file path is required", http.StatusBadRequest)
+			return
+		}
+		d.handleFilesWrite(w, r, baseDir, filePath)
+	default:
+		http.Error(w, "unknown action: "+action, http.StatusBadRequest)
+	}
+}
+
+// fileEntry mirrors the JSON shape returned by the server's project files API.
+type fileEntry struct {
+	Path     string `json:"path"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	IsDir    bool   `json:"is_dir"`
+	ModTime  string `json:"mod_time"`
+	Category string `json:"category"`
+}
+
+func (d *Daemon) handleFilesList(w http.ResponseWriter, baseDir string) {
+	info, err := os.Stat(baseDir)
+	if err != nil || !info.IsDir() {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]fileEntry{})
+		return
+	}
+
+	var files []fileEntry
+	filepath.Walk(baseDir, func(path string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(baseDir, path)
+		if rel == "." {
+			return nil
+		}
+		files = append(files, fileEntry{
+			Path:     rel,
+			Name:     fi.Name(),
+			Size:     fi.Size(),
+			IsDir:    fi.IsDir(),
+			ModTime:  fi.ModTime().Format(time.RFC3339),
+			Category: categorizeFile(rel),
+		})
+		return nil
+	})
+	if files == nil {
+		files = []fileEntry{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(files)
+}
+
+func (d *Daemon) handleFilesRead(w http.ResponseWriter, baseDir, filePath string) {
+	fullPath := filepath.Join(baseDir, filePath)
+
+	// Prevent path traversal.
+	absBase, _ := filepath.Abs(baseDir)
+	absPath, _ := filepath.Abs(fullPath)
+	if !strings.HasPrefix(absPath, absBase+string(os.PathSeparator)) && absPath != absBase {
+		http.Error(w, "path traversal not allowed", http.StatusForbidden)
+		return
+	}
+
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"path":    filePath,
+		"content": string(data),
+	})
+}
+
+func (d *Daemon) handleFilesWrite(w http.ResponseWriter, r *http.Request, baseDir, filePath string) {
+	fullPath := filepath.Join(baseDir, filePath)
+
+	absBase, _ := filepath.Abs(baseDir)
+	absPath, _ := filepath.Abs(fullPath)
+	if !strings.HasPrefix(absPath, absBase+string(os.PathSeparator)) && absPath != absBase {
+		http.Error(w, "path traversal not allowed", http.StatusForbidden)
+		return
+	}
+
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	os.MkdirAll(filepath.Dir(fullPath), 0o755)
+	if err := os.WriteFile(fullPath, []byte(req.Content), 0o644); err != nil {
+		http.Error(w, "failed to write file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"path": filePath, "status": "saved"})
+}
+
+// categorizeFile determines a file category based on its relative path.
+func categorizeFile(rel string) string {
+	base := filepath.Base(rel)
+	switch {
+	case strings.Contains(rel, "memories/session/"):
+		return "plan"
+	case strings.HasPrefix(base, "task-"):
+		return "task"
+	case strings.HasPrefix(base, "report-"):
+		return "report"
+	case strings.HasPrefix(base, "state-") || rel == "runtime/agents-status.json":
+		return "state"
+	case strings.HasSuffix(rel, "init.md"):
+		return "init"
+	default:
+		return "other"
 	}
 }
 

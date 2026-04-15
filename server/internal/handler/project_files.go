@@ -1,25 +1,26 @@
 package handler
 
 import (
-	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 )
 
-const projectsBaseDir = "/mnt2/yuxuanhu/multica/projects"
+// daemonHealthURL is the default daemon health server address.
+// When server and daemon are co-located this is localhost; when split the
+// server will resolve the daemon's IP from the runtime record.
+const daemonHealthURL = "http://localhost:19514"
 
-type fileEntry struct {
-	Path     string `json:"path"`
-	Name     string `json:"name"`
-	Size     int64  `json:"size"`
-	IsDir    bool   `json:"is_dir"`
-	ModTime  string `json:"mod_time"`
-	Category string `json:"category"`
+// getDaemonURL returns the base URL for the daemon health server that owns the
+// given project.  For now every project is served by the local daemon; this is
+// the hook point for multi-runtime support.
+func (h *Handler) getDaemonURL(r *http.Request, projectID, workspaceID string) string {
+	// TODO: look up runtime_id from project_v2, then resolve the daemon's
+	// external IP + health port.  For now fall back to localhost.
+	return daemonHealthURL
 }
 
 // ListProjectFiles returns a flat list of files in the project output directory.
@@ -33,40 +34,9 @@ func (h *Handler) ListProjectFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baseDir := filepath.Join(projectsBaseDir, projectID)
-	info, err := os.Stat(baseDir)
-	if err != nil || !info.IsDir() {
-		writeJSON(w, http.StatusOK, []fileEntry{})
-		return
-	}
-
-	var files []fileEntry
-	filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		rel, _ := filepath.Rel(baseDir, path)
-		if rel == "." {
-			return nil
-		}
-
-		category := categorizeFile(rel)
-
-		files = append(files, fileEntry{
-			Path:    rel,
-			Name:    info.Name(),
-			Size:    info.Size(),
-			IsDir:   info.IsDir(),
-			ModTime: info.ModTime().Format(time.RFC3339),
-			Category: category,
-		})
-		return nil
-	})
-
-	if files == nil {
-		files = []fileEntry{}
-	}
-	writeJSON(w, http.StatusOK, files)
+	daemonURL := h.getDaemonURL(r, projectID, workspaceID)
+	target := fmt.Sprintf("%s/files/%s/list", daemonURL, url.PathEscape(projectID))
+	proxyDaemonGET(w, target)
 }
 
 // ReadProjectFile returns the content of a specific file in the project directory.
@@ -80,105 +50,67 @@ func (h *Handler) ReadProjectFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract the file path from the wildcard portion of the URL.
 	filePath := chi.URLParam(r, "*")
 	if filePath == "" {
 		writeError(w, http.StatusBadRequest, "file path is required")
 		return
 	}
 
-	baseDir := filepath.Join(projectsBaseDir, projectID)
-	fullPath := filepath.Join(baseDir, filePath)
-
-	// Security: prevent path traversal.
-	absBase, err := filepath.Abs(baseDir)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	absPath, err := filepath.Abs(fullPath)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	if !strings.HasPrefix(absPath, absBase+string(os.PathSeparator)) && absPath != absBase {
-		writeError(w, http.StatusForbidden, "path traversal not allowed")
-		return
-	}
-
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "file not found")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{
-		"path":    filePath,
-		"content": string(data),
-	})
-}
-
-// categorizeFile determines a file category based on its relative path.
-func categorizeFile(rel string) string {
-	base := filepath.Base(rel)
-	switch {
-	case strings.Contains(rel, "memories/session/"):
-		return "plan"
-	case strings.HasPrefix(base, "task-"):
-		return "task"
-	case strings.HasPrefix(base, "report-"):
-		return "report"
-	case strings.HasPrefix(base, "state-") || rel == "runtime/agents-status.json":
-		return "state"
-	case strings.HasSuffix(rel, "init.md"):
-		return "init"
-	default:
-		return "other"
-	}
+	daemonURL := h.getDaemonURL(r, projectID, workspaceID)
+	target := fmt.Sprintf("%s/files/%s/read/%s", daemonURL, url.PathEscape(projectID), filePath)
+	proxyDaemonGET(w, target)
 }
 
 // WriteProjectFile saves content to a file in the project directory.
 //
 // PUT /api/v2/projects/{projectId}/files/*
 func (h *Handler) WriteProjectFile(w http.ResponseWriter, r *http.Request) {
-projectID := chi.URLParam(r, "projectId")
-workspaceID := resolveWorkspaceID(r)
-if !h.projectV2Exists(r, projectID, workspaceID) {
-writeError(w, http.StatusNotFound, "project not found")
-return
+	projectID := chi.URLParam(r, "projectId")
+	workspaceID := resolveWorkspaceID(r)
+	if !h.projectV2Exists(r, projectID, workspaceID) {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	filePath := chi.URLParam(r, "*")
+	if filePath == "" {
+		writeError(w, http.StatusBadRequest, "file path is required")
+		return
+	}
+
+	daemonURL := h.getDaemonURL(r, projectID, workspaceID)
+	target := fmt.Sprintf("%s/files/%s/write/%s", daemonURL, url.PathEscape(projectID), filePath)
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPut, target, r.Body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create request")
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "daemon unreachable")
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
-filePath := chi.URLParam(r, "*")
-if filePath == "" {
-writeError(w, http.StatusBadRequest, "file path is required")
-return
-}
+// proxyDaemonGET forwards a GET request to the daemon and copies the response
+// back to the client.
+func proxyDaemonGET(w http.ResponseWriter, target string) {
+	resp, err := http.Get(target)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "daemon unreachable")
+		return
+	}
+	defer resp.Body.Close()
 
-var req struct {
-Content string `json:"content"`
-}
-if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-writeError(w, http.StatusBadRequest, "invalid request body")
-return
-}
-
-baseDir := filepath.Join(projectsBaseDir, projectID)
-fullPath := filepath.Join(baseDir, filePath)
-
-absBase, _ := filepath.Abs(baseDir)
-absPath, _ := filepath.Abs(fullPath)
-if !strings.HasPrefix(absPath, absBase) {
-writeError(w, http.StatusForbidden, "path traversal not allowed")
-return
-}
-
-// Ensure parent directory exists
-os.MkdirAll(filepath.Dir(fullPath), 0o755)
-
-if err := os.WriteFile(fullPath, []byte(req.Content), 0o644); err != nil {
-writeError(w, http.StatusInternalServerError, "failed to write file")
-return
-}
-
-writeJSON(w, http.StatusOK, map[string]string{"path": filePath, "status": "saved"})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
