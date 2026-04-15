@@ -76,6 +76,9 @@ func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 		var sessionID string
 		finalStatus := "completed"
 		var finalError string
+		var totalOutputTokens int64
+		var actualModel string
+		var premiumRequests int64
 
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
@@ -95,8 +98,16 @@ func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 			case "assistant.turn_start":
 				trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
 
+			case "session.tools_updated":
+				var d struct {
+					Model string `json:"model"`
+				}
+				if json.Unmarshal(evt.Data, &d) == nil && d.Model != "" {
+					actualModel = d.Model
+				}
+
 			case "assistant.message":
-				b.handleMessage(evt.Data, msgCh, &output)
+				b.handleMessage(evt.Data, msgCh, &output, &totalOutputTokens, actualModel)
 
 			case "tool.execution_start":
 				b.handleToolStart(evt.Data, msgCh)
@@ -109,6 +120,16 @@ func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 				if evt.ExitCode != 0 {
 					finalStatus = "failed"
 					finalError = fmt.Sprintf("copilot exited with code %d", evt.ExitCode)
+				}
+				// Parse usage from result
+				var resultData struct {
+					Usage struct {
+						PremiumRequests    int64 `json:"premiumRequests"`
+						TotalApiDurationMs int64 `json:"totalApiDurationMs"`
+					} `json:"usage"`
+				}
+				if json.Unmarshal([]byte(line), &resultData) == nil {
+					premiumRequests = resultData.Usage.PremiumRequests
 				}
 			}
 		}
@@ -129,19 +150,37 @@ func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 
 		b.cfg.Logger.Info("copilot finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
 
+		// Emit final context status with premium requests
+		if totalOutputTokens > 0 || premiumRequests > 0 {
+			trySend(msgCh, Message{
+				Type:   MessageStatus,
+				Status: fmt.Sprintf("context:{\"output_tokens\":%d,\"model\":\"%s\",\"premium_requests\":%d}", totalOutputTokens, actualModel, premiumRequests),
+			})
+		}
+
+		modelKey := actualModel
+		if modelKey == "" {
+			modelKey = "copilot"
+		}
+
 		resCh <- Result{
 			Status:     finalStatus,
 			Output:     output.String(),
 			Error:      finalError,
 			DurationMs: duration.Milliseconds(),
 			SessionID:  sessionID,
+			Usage: map[string]TokenUsage{
+				modelKey: {
+					OutputTokens: totalOutputTokens,
+				},
+			},
 		}
 	}()
 
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
-func (b *copilotBackend) handleMessage(data json.RawMessage, ch chan<- Message, output *strings.Builder) {
+func (b *copilotBackend) handleMessage(data json.RawMessage, ch chan<- Message, output *strings.Builder, totalOutputTokens *int64, model string) {
 	var msg copilotMessageData
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return
@@ -149,6 +188,13 @@ func (b *copilotBackend) handleMessage(data json.RawMessage, ch chan<- Message, 
 	if msg.Content != "" {
 		output.WriteString(msg.Content)
 		trySend(ch, Message{Type: MessageText, Content: msg.Content})
+	}
+	if msg.OutputTokens > 0 {
+		*totalOutputTokens += msg.OutputTokens
+		trySend(ch, Message{
+			Type:   MessageStatus,
+			Status: fmt.Sprintf("context:{\"output_tokens\":%d,\"model\":\"%s\"}", *totalOutputTokens, model),
+		})
 	}
 }
 
@@ -208,6 +254,7 @@ type copilotEvent struct {
 
 type copilotMessageData struct {
 	Content      string               `json:"content"`
+	OutputTokens int64                `json:"outputTokens"`
 	ToolRequests []copilotToolRequest `json:"toolRequests"`
 }
 

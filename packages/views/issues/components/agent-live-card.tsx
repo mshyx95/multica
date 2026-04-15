@@ -277,6 +277,20 @@ function SingleAgentLiveCard({ task, items, issueId, agentName }: SingleAgentLiv
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Extract context info (token usage) from status messages
+  const contextInfo = (() => {
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (item.type === "text" && item.content?.startsWith("context:")) {
+        try {
+          const json = item.content.slice("context:".length);
+          return JSON.parse(json) as { output_tokens: number; model: string; premium_requests?: number };
+        } catch { /* ignore parse errors */ }
+      }
+    }
+    return null;
+  })();
+
   // Elapsed time
   useEffect(() => {
     if (!task.started_at && !task.dispatched_at) return;
@@ -316,6 +330,9 @@ function SingleAgentLiveCard({ task, items, issueId, agentName }: SingleAgentLiv
 
   const toolCount = items.filter((i) => i.type === "tool_use").length;
 
+  // Filter out context status messages from timeline display
+  const timelineItems = items.filter((i) => !(i.type === "text" && i.content?.startsWith("context:")));
+
   return (
     <div className="rounded-lg border border-info/20 bg-info/5 backdrop-blur-sm">
       {/* Header — click to toggle timeline */}
@@ -345,6 +362,14 @@ function SingleAgentLiveCard({ task, items, issueId, agentName }: SingleAgentLiv
           <span className="text-muted-foreground tabular-nums shrink-0">{elapsed}</span>
           {toolCount > 0 && (
             <span className="text-muted-foreground shrink-0">{toolCount} tools</span>
+          )}
+          {contextInfo && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
+              <Brain className="h-3 w-3" />
+              <span>{contextInfo.output_tokens.toLocaleString()} tokens</span>
+              <span className="text-muted-foreground/50">·</span>
+              <span>{contextInfo.model}</span>
+            </div>
           )}
         </div>
         <div className="ml-auto flex items-center gap-1 shrink-0">
@@ -376,13 +401,13 @@ function SingleAgentLiveCard({ task, items, issueId, agentName }: SingleAgentLiv
         )}
       >
         <div className="overflow-hidden">
-          {items.length > 0 ? (
+          {timelineItems.length > 0 ? (
             <div
               ref={scrollRef}
               onScroll={handleScroll}
               className="relative max-h-80 overflow-y-auto overscroll-y-contain border-t border-info/10 px-3 py-2 space-y-0.5"
             >
-              {items.map((item, idx) => (
+              {timelineItems.map((item, idx) => (
                 <TimelineRow key={`${item.seq}-${idx}`} item={item} />
               ))}
 

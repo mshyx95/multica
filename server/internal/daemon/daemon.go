@@ -1279,6 +1279,18 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 						Content: msg.Content,
 					})
 					mu.Unlock()
+				case agent.MessageStatus:
+					// Forward context status messages so the frontend can show token usage
+					if strings.HasPrefix(msg.Status, "context:") {
+						s := seq.Add(1)
+						mu.Lock()
+						batch = append(batch, TaskMessageData{
+							Seq:     int(s),
+							Type:    "text",
+							Content: msg.Status,
+						})
+						mu.Unlock()
+					}
 				}
 			case <-drainCtx.Done():
 				goto drainDone

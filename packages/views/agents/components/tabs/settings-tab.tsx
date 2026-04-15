@@ -26,13 +26,22 @@ import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { ActorAvatar } from "../../../common/actor-avatar";
 
 const COPILOT_MODELS = [
-  { id: "gpt-5.4", name: "GPT-5.4" },
-  { id: "gpt-5.4-mini", name: "GPT-5.4 mini" },
-  { id: "gpt-5.2", name: "GPT-5.2" },
-  { id: "claude-sonnet-4", name: "Claude Sonnet 4" },
-  { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
-  { id: "o4-mini", name: "o4-mini" },
-  { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+  { id: "claude-opus-4.6-1m", name: "Claude Opus 4.6 (1M)(Internal)", cost: "6x", isDefault: true },
+  { id: "claude-sonnet-4.6", name: "Claude Sonnet 4.6", cost: "1x" },
+  { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", cost: "1x" },
+  { id: "claude-haiku-4.5", name: "Claude Haiku 4.5", cost: "0.33x" },
+  { id: "claude-opus-4.6", name: "Claude Opus 4.6", cost: "3x" },
+  { id: "claude-opus-4.5", name: "Claude Opus 4.5", cost: "3x" },
+  { id: "claude-sonnet-4", name: "Claude Sonnet 4", cost: "1x" },
+  { id: "goldeneye", name: "Goldeneye (Internal)", cost: "1x" },
+  { id: "gpt-5.4", name: "GPT-5.4", cost: "1x" },
+  { id: "gpt-5.3-codex", name: "GPT-5.3-Codex", cost: "1x" },
+  { id: "gpt-5.2-codex", name: "GPT-5.2-Codex", cost: "1x" },
+  { id: "gpt-5.2", name: "GPT-5.2", cost: "1x" },
+  { id: "gpt-5.1", name: "GPT-5.1", cost: "1x" },
+  { id: "gpt-5.4-mini", name: "GPT-5.4 mini", cost: "0.33x" },
+  { id: "gpt-5-mini", name: "GPT-5 mini", cost: "0x" },
+  { id: "gpt-4.1", name: "GPT-4.1", cost: "0.33x" },
 ];
 
 export function SettingsTab({
@@ -312,12 +321,15 @@ export function SettingsTab({
                     setModel(m.id);
                     setModelOpen(false);
                   }}
-                  className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors ${
+                  className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${
                     model === m.id ? "bg-accent" : "hover:bg-accent/50"
                   }`}
                 >
-                  <span className="font-medium">{m.name}</span>
-                  <span className="text-xs text-muted-foreground">{m.id}</span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-medium truncate">{m.name}</span>
+                    {m.isDefault && <span className="shrink-0 rounded bg-primary/10 px-1 py-0.5 text-[10px] font-medium text-primary">default</span>}
+                  </div>
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{m.cost}</span>
                 </button>
               ))}
             </PopoverContent>
