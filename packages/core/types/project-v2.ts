@@ -79,13 +79,16 @@ export interface DeployProjectV2Request {
   runtime_id: string;
 }
 
+export type ProjectFileCategory = "plan" | "task" | "report" | "state" | "other";
+export type TmuxWindowStatus = "busy" | "idle" | "dead";
+
 export interface ProjectFile {
   path: string;
   name: string;
   size: number;
   is_dir: boolean;
   mod_time: string;
-  category: string;
+  category: ProjectFileCategory;
 }
 
 export interface ProjectFileContent {
@@ -96,25 +99,5 @@ export interface ProjectFileContent {
 export interface TmuxWindow {
   name: string;
   active: boolean;
-  status: string;
-}
-
-export interface ProjectFile {
-  path: string;
-  name: string;
-  size: number;
-  is_dir: boolean;
-  mod_time: string;
-  category: "plan" | "task" | "report" | "state" | "other";
-}
-
-export interface ProjectFileContent {
-  path: string;
-  content: string;
-}
-
-export interface TmuxWindow {
-  name: string;
-  active: boolean;
-  status: "busy" | "idle" | "dead";
+  status: TmuxWindowStatus;
 }

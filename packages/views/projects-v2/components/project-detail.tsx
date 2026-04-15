@@ -9,7 +9,10 @@ import {
   Trash2,
   Terminal as TerminalIcon,
   FileText,
-  ScrollText,
+  ChevronDown,
+  ChevronRight,
+  Files,
+  ListTodo,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
@@ -20,6 +23,11 @@ import {
   PopoverTrigger,
   PopoverContent,
 } from "@multica/ui/components/ui/popover";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@multica/ui/components/ui/collapsible";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { toast } from "sonner";
 import type {
@@ -27,11 +35,12 @@ import type {
   ProjectAgent,
   Subtask,
   SubtaskStatus,
+  ProjectFile,
+  TmuxWindow,
 } from "@multica/core/types";
 import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { PROJECT_V2_STATUS_CONFIG } from "../config";
-import { AgentCard } from "./agent-card";
 import { WebTerminal } from "./web-terminal";
 
 // ─── Agent roles definition ─────────────────────────────────────────────────
@@ -50,7 +59,17 @@ const AGENT_ROLES: AgentRoleDef[] = [
   { role: "evaluator", label: "Evaluator", defaultModel: "gpt-5.3-codex" },
 ];
 
-type ContentTab = "terminal" | "logs" | "results";
+type ContentTab = "terminal" | "files" | "tasks";
+
+// ─── File category config ───────────────────────────────────────────────────
+
+const FILE_CATEGORY_CONFIG: Record<string, { label: string; icon: string }> = {
+  plan: { label: "📋 Plans", icon: "📋" },
+  task: { label: "📝 Tasks", icon: "📝" },
+  report: { label: "📊 Reports", icon: "📊" },
+  state: { label: "⚙️ State", icon: "⚙️" },
+  other: { label: "📄 Other", icon: "📄" },
+};
 
 // ─── Subtask status styles ──────────────────────────────────────────────────
 
@@ -60,6 +79,14 @@ const SUBTASK_STATUS_STYLES: Record<SubtaskStatus, string> = {
   completed: "text-green-600 dark:text-green-400 bg-green-500/20",
   failed: "text-destructive bg-destructive/20",
   blocked: "text-orange-600 dark:text-orange-400 bg-orange-500/20",
+};
+
+// ─── Tmux window status → dot color ────────────────────────────────────────
+
+const TMUX_STATUS_DOT: Record<string, string> = {
+  busy: "bg-green-500",
+  idle: "bg-muted-foreground",
+  dead: "bg-destructive",
 };
 
 // ─── Helper: match project agents to role defs ──────────────────────────────
@@ -78,21 +105,149 @@ function getVisibleRoles(status: ProjectV2["status"]): AgentRoleDef[] {
   return [];
 }
 
-// ─── Subtask sidebar list ───────────────────────────────────────────────────
+// ─── Left Panel: Agent List ─────────────────────────────────────────────────
+
+function AgentList({
+  visibleRoles,
+  agentMap,
+  tmuxWindows,
+  selectedAgent,
+  onSelectAgent,
+  isDraft,
+}: {
+  visibleRoles: AgentRoleDef[];
+  agentMap: Map<string, ProjectAgent>;
+  tmuxWindows: TmuxWindow[];
+  selectedAgent: string | null;
+  onSelectAgent: (role: string) => void;
+  isDraft: boolean;
+}) {
+  const tmuxMap = useMemo(() => {
+    const m = new Map<string, TmuxWindow>();
+    for (const w of tmuxWindows) m.set(w.name, w);
+    return m;
+  }, [tmuxWindows]);
+
+  if (isDraft) {
+    return <p className="text-xs text-muted-foreground py-2">Deploy to see agents</p>;
+  }
+
+  if (visibleRoles.length === 0) {
+    return <p className="text-xs text-muted-foreground py-2">No agents</p>;
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {visibleRoles.map((roleDef) => {
+        const agentData = agentMap.get(roleDef.role);
+        const tmuxWin = tmuxMap.get(roleDef.role);
+        // Determine status: prefer tmux live status, fall back to agent DB status
+        const liveStatus = tmuxWin?.status;
+        const dotCls = liveStatus
+          ? (TMUX_STATUS_DOT[liveStatus] ?? "bg-muted-foreground/30")
+          : "bg-muted-foreground/30";
+        const isSelected = selectedAgent === roleDef.role;
+
+        return (
+          <button
+            key={roleDef.role}
+            onClick={() => onSelectAgent(roleDef.role)}
+            className={`flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left text-xs transition-colors ${
+              isSelected
+                ? "border-primary bg-primary/5"
+                : "border-border hover:bg-muted"
+            }`}
+          >
+            <span className={`h-2 w-2 shrink-0 rounded-full ${dotCls}`} />
+            <span className="font-medium truncate flex-1">{roleDef.label}</span>
+            {agentData?.current_task && (
+              <span className="text-[10px] text-muted-foreground truncate max-w-[100px]">
+                {agentData.current_task}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Left Panel: File Tree ──────────────────────────────────────────────────
+
+function FileTree({
+  files,
+  selectedFile,
+  onFileClick,
+}: {
+  files: ProjectFile[];
+  selectedFile: string | null;
+  onFileClick: (path: string) => void;
+}) {
+  const grouped = useMemo(() => {
+    const groups: Record<string, ProjectFile[]> = {};
+    for (const f of files) {
+      if (f.is_dir) continue;
+      const cat = f.category || "other";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(f);
+    }
+    return groups;
+  }, [files]);
+
+  const categoryOrder = ["plan", "task", "report", "state", "other"];
+
+  if (files.length === 0) {
+    return <p className="text-xs text-muted-foreground py-2">No files yet</p>;
+  }
+
+  return (
+    <div className="space-y-0.5">
+      {categoryOrder.map((cat) => {
+        const catFiles = grouped[cat];
+        if (!catFiles || catFiles.length === 0) return null;
+        const cfg = FILE_CATEGORY_CONFIG[cat] || { label: cat, icon: "📄" };
+        return (
+          <div key={cat} className="mb-1.5">
+            <div className="text-[10px] font-medium text-muted-foreground mb-0.5 px-1">
+              {cfg.label}
+            </div>
+            {catFiles.map((f) => (
+              <button
+                key={f.path}
+                onClick={() => onFileClick(f.path)}
+                className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-xs transition-colors ${
+                  selectedFile === f.path
+                    ? "bg-primary/10 text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`}
+                title={f.path}
+              >
+                <FileText className="h-3 w-3 shrink-0" />
+                <span className="truncate">{f.name}</span>
+              </button>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Left Panel: Subtask List (compact) ─────────────────────────────────────
 
 function SubtaskList({ subtasks }: { subtasks: Subtask[] }) {
   if (subtasks.length === 0) return null;
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       {subtasks.map((st) => {
         const styleCls = SUBTASK_STATUS_STYLES[st.status];
         return (
           <div
             key={st.id}
-            className="rounded-md border border-border px-2.5 py-1.5 text-xs"
+            className="rounded-md border border-border px-2 py-1 text-xs"
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${styleCls}`}>
                 {st.status}
               </span>
@@ -110,68 +265,169 @@ function SubtaskList({ subtasks }: { subtasks: Subtask[] }) {
   );
 }
 
-// ─── Logs panel placeholder ─────────────────────────────────────────────────
+// ─── Main Tab: Terminal View ────────────────────────────────────────────────
 
-function LogsPanel({ projectId, agentRole }: { projectId: string; agentRole: string }) {
-  const [logs, setLogs] = useState<string>("Loading logs...");
-
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchLogs() {
-      try {
-        const res = await fetch(`/api/v2/projects/${projectId}/agents/${agentRole}/logs`);
-        if (!res.ok) {
-          setLogs(`No logs available (${res.status})`);
-          return;
-        }
-        const text = await res.text();
-        if (!cancelled) setLogs(text || "No log output yet.");
-      } catch {
-        if (!cancelled) setLogs("Failed to fetch logs.");
-      }
-    }
-    fetchLogs();
-    const interval = setInterval(fetchLogs, 5000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [projectId, agentRole]);
+function TerminalView({
+  sessionName,
+  selectedAgent,
+}: {
+  sessionName: string | null;
+  selectedAgent: string | null;
+}) {
+  if (!selectedAgent || !sessionName) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        Select an agent to view its terminal
+      </div>
+    );
+  }
 
   return (
-    <div className="h-full overflow-auto rounded-lg border bg-[#0a0a0a] p-4">
-      <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap">{logs}</pre>
+    <WebTerminal
+      key={sessionName}
+      sessionName={sessionName}
+    />
+  );
+}
+
+// ─── Main Tab: File Viewer ──────────────────────────────────────────────────
+
+function FileViewer({
+  selectedFile,
+  fileContent,
+  isLoading,
+}: {
+  selectedFile: string | null;
+  fileContent: string;
+  isLoading: boolean;
+}) {
+  if (!selectedFile) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        <div className="text-center">
+          <Files className="h-8 w-8 mx-auto mb-2 opacity-40" />
+          <p>Select a file to view its content</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isJson = selectedFile.endsWith(".json");
+
+  let displayContent = fileContent;
+  if (isJson && fileContent) {
+    try {
+      displayContent = JSON.stringify(JSON.parse(fileContent), null, 2);
+    } catch {
+      // already a string, use as-is
+    }
+  }
+
+  return (
+    <div className="flex h-full flex-col min-h-0">
+      {/* Breadcrumb */}
+      <div className="shrink-0 flex items-center gap-1.5 px-1 pb-2 text-xs text-muted-foreground font-mono">
+        {selectedFile.split("/").map((part, i, arr) => (
+          <span key={i} className="flex items-center gap-1">
+            {i > 0 && <span className="text-muted-foreground/40">/</span>}
+            <span className={i === arr.length - 1 ? "text-foreground font-medium" : ""}>
+              {part}
+            </span>
+          </span>
+        ))}
+      </div>
+
+      {/* Content */}
+      {isLoading ? (
+        <div className="flex-1 flex items-center justify-center">
+          <Skeleton className="h-40 w-full rounded-lg" />
+        </div>
+      ) : (
+        <pre className="flex-1 whitespace-pre-wrap text-xs font-mono bg-muted rounded-lg p-4 overflow-auto min-h-0">
+          {displayContent || "(empty file)"}
+        </pre>
+      )}
     </div>
   );
 }
 
-// ─── Results panel placeholder ──────────────────────────────────────────────
+// ─── Main Tab: Task Tracker ─────────────────────────────────────────────────
 
-function ResultsPanel({ projectId, agentRole }: { projectId: string; agentRole: string }) {
-  const [content, setContent] = useState<string>("Loading results...");
-
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchResults() {
-      try {
-        const res = await fetch(`/api/v2/projects/${projectId}/agents/${agentRole}/results`);
-        if (!res.ok) {
-          setContent("No results available yet.");
-          return;
-        }
-        const text = await res.text();
-        if (!cancelled) setContent(text || "No results yet.");
-      } catch {
-        if (!cancelled) setContent("Results endpoint not available.");
+function TaskTracker({ files }: { files: ProjectFile[] }) {
+  // Group task files by executor
+  const executorTasks = useMemo(() => {
+    const groups: Record<string, ProjectFile[]> = {};
+    for (const f of files) {
+      if (f.category !== "task" && f.category !== "report") continue;
+      // Extract executor from path: tasks/executor-0/task-1-xxx.md → executor-0
+      const match = f.path.match(/tasks\/(executor-\d+|evaluator)\//);
+      if (match && match[1]) {
+        const executor = match[1];
+        if (!groups[executor]) groups[executor] = [];
+        groups[executor]!.push(f);
       }
     }
-    fetchResults();
-    return () => { cancelled = true; };
-  }, [projectId, agentRole]);
+    return groups;
+  }, [files]);
+
+  const executors = Object.keys(executorTasks).sort();
+
+  if (executors.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        <div className="text-center">
+          <ListTodo className="h-8 w-8 mx-auto mb-2 opacity-40" />
+          <p>No task assignments yet</p>
+          <p className="text-xs mt-1">Tasks appear once executors are assigned work</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="h-full overflow-auto rounded-lg border bg-background p-4">
-      <pre className="text-xs text-foreground font-mono whitespace-pre-wrap">{content}</pre>
+    <div className="space-y-4 overflow-auto h-full">
+      {executors.map((executor) => {
+        const label = executor.startsWith("executor-")
+          ? `Executor ${executor.split("-")[1]}`
+          : executor.charAt(0).toUpperCase() + executor.slice(1);
+        const taskFiles = executorTasks[executor] ?? [];
+
+        return (
+          <div key={executor} className="rounded-lg border">
+            <div className="px-3 py-2 border-b bg-muted/50">
+              <h3 className="text-xs font-semibold">{label}</h3>
+            </div>
+            <div className="p-3 space-y-2">
+              {taskFiles.map((f) => {
+                const isReport = f.name.startsWith("report-");
+                const isTask = f.name.startsWith("task-");
+                return (
+                  <div key={f.path} className="rounded border px-2.5 py-2 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px]">
+                        {isReport ? "📊" : isTask ? "📝" : "📄"}
+                      </span>
+                      <span className="font-medium truncate">{f.name}</span>
+                      <span
+                        className={`ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                          isReport
+                            ? "text-green-600 dark:text-green-400 bg-green-500/20"
+                            : "text-amber-600 dark:text-amber-400 bg-amber-500/20"
+                        }`}
+                      >
+                        {isReport ? "report" : "task"}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-1 font-mono truncate">
+                      {f.path}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -183,8 +439,16 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
 
-  const [selectedRole, setSelectedRole] = useState<string | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ContentTab>("terminal");
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string>("");
+  const [fileLoading, setFileLoading] = useState(false);
+
+  // Section collapse state
+  const [agentsOpen, setAgentsOpen] = useState(true);
+  const [filesOpen, setFilesOpen] = useState(true);
+  const [subtasksOpen, setSubtasksOpen] = useState(true);
 
   const { data: project, isLoading: projectLoading } = useQuery({
     queryKey: ["projects-v2", projectId],
@@ -206,6 +470,28 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
 
   const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
 
+  // Tmux session name
+  const sessionName = useMemo(
+    () => `multica-${projectId.slice(0, 8)}`,
+    [projectId],
+  );
+
+  // Fetch tmux windows for live agent status
+  const { data: tmuxWindows = [] } = useQuery({
+    queryKey: ["tmux-windows", sessionName],
+    queryFn: () => api.listTmuxWindows(sessionName),
+    refetchInterval: 5000,
+    enabled: project?.status !== "draft",
+  });
+
+  // Fetch project files
+  const { data: files = [] } = useQuery({
+    queryKey: ["projects-v2", projectId, "files"],
+    queryFn: () => api.listProjectFiles(projectId),
+    refetchInterval: 10000,
+    enabled: project?.status !== "draft",
+  });
+
   // Build a map from window name → agent data for quick lookup
   const agentMap = useMemo(() => {
     const m = new Map<string, ProjectAgent>();
@@ -222,22 +508,47 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
     [project],
   );
 
-  // Auto-select planner on initial load
+  // Auto-select planner on initial load when planning
   useEffect(() => {
-    if (selectedRole !== null) return;
+    if (selectedAgent !== null) return;
     if (!project) return;
     if (project.status === "draft") return;
+    if (project.status === "planning") {
+      setSelectedAgent("planner");
+      return;
+    }
     const firstRole = visibleRoles[0];
     if (firstRole) {
-      setSelectedRole(firstRole.role);
+      setSelectedAgent(firstRole.role);
     }
-  }, [project, visibleRoles, selectedRole]);
+  }, [project, visibleRoles, selectedAgent]);
 
-  // Compute the tmux session name for the selected agent
+  // Compute the tmux session:window name for the selected agent terminal
   const terminalSessionName = useMemo(() => {
-    if (!selectedRole) return null;
-    return `multica-${projectId.slice(0, 8)}:${selectedRole}`;
-  }, [projectId, selectedRole]);
+    if (!selectedAgent) return null;
+    return `${sessionName}:${selectedAgent}`;
+  }, [sessionName, selectedAgent]);
+
+  // ── File click handler ──
+  const handleFileClick = useCallback(async (filePath: string) => {
+    setActiveTab("files");
+    setSelectedFile(filePath);
+    setFileLoading(true);
+    try {
+      const result = await api.readProjectFile(projectId, filePath);
+      setFileContent(result.content);
+    } catch {
+      setFileContent("Failed to load file content.");
+    } finally {
+      setFileLoading(false);
+    }
+  }, [projectId]);
+
+  // ── Agent select handler ──
+  const handleSelectAgent = useCallback((role: string) => {
+    setSelectedAgent(role);
+    setActiveTab("terminal");
+  }, []);
 
   // ── Actions ──
 
@@ -299,8 +610,8 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
   // ── Tab bar items ──
   const tabs: { id: ContentTab; label: string; icon: React.ReactNode }[] = [
     { id: "terminal", label: "Terminal", icon: <TerminalIcon className="h-3.5 w-3.5" /> },
-    { id: "logs", label: "Logs", icon: <ScrollText className="h-3.5 w-3.5" /> },
-    { id: "results", label: "Results", icon: <FileText className="h-3.5 w-3.5" /> },
+    { id: "files", label: "Files", icon: <Files className="h-3.5 w-3.5" /> },
+    { id: "tasks", label: "Tasks", icon: <ListTodo className="h-3.5 w-3.5" /> },
   ];
 
   return (
@@ -358,53 +669,75 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
 
       {/* ── Body: sidebar + main ── */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* ── Left sidebar ── */}
-        <div className="w-64 shrink-0 border-r flex flex-col min-h-0">
-          {/* Agent list */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            <h2 className="text-xs font-medium text-muted-foreground mb-1">Agents</h2>
-            {isDraft ? (
-              <p className="text-xs text-muted-foreground py-2">Deploy to see agents</p>
-            ) : visibleRoles.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-2">No agents</p>
-            ) : (
-              visibleRoles.map((roleDef) => {
-                const agentData = agentMap.get(roleDef.role);
-                return (
-                  <AgentCard
-                    key={roleDef.role}
-                    role={roleDef.role}
-                    label={roleDef.label}
-                    model={agentData?.model || roleDef.defaultModel}
-                    status={agentData?.status ?? "unknown"}
-                    currentTask={agentData?.current_task}
-                    tokenUsage={agentData?.token_usage}
-                    isSelected={selectedRole === roleDef.role}
-                    onClick={() => setSelectedRole(roleDef.role)}
-                  />
-                );
-              })
-            )}
-          </div>
+        {/* ── Left sidebar (w-72) ── */}
+        <div className="w-72 shrink-0 border-r flex flex-col min-h-0 overflow-y-auto">
+          {/* Section 1: Agents */}
+          <Collapsible open={agentsOpen} onOpenChange={setAgentsOpen}>
+            <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
+              {agentsOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              Agents
+              {tmuxWindows.length > 0 && (
+                <span className="ml-auto text-[10px] font-normal">
+                  {tmuxWindows.filter((w) => w.status === "busy").length} active
+                </span>
+              )}
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="px-3 pb-3">
+                <AgentList
+                  visibleRoles={visibleRoles}
+                  agentMap={agentMap}
+                  tmuxWindows={tmuxWindows}
+                  selectedAgent={selectedAgent}
+                  onSelectAgent={handleSelectAgent}
+                  isDraft={isDraft}
+                />
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
 
-          {/* Subtask list */}
+          {/* Section 2: Files */}
+          <Collapsible open={filesOpen} onOpenChange={setFilesOpen}>
+            <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors border-t">
+              {filesOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              Files
+              {files.length > 0 && (
+                <span className="ml-auto text-[10px] font-normal">{files.filter((f) => !f.is_dir).length}</span>
+              )}
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="px-3 pb-3">
+                <FileTree
+                  files={files}
+                  selectedFile={selectedFile}
+                  onFileClick={handleFileClick}
+                />
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+
+          {/* Section 3: Subtasks */}
           {subtasks.length > 0 && (
-            <div className="shrink-0 border-t p-3 max-h-72 overflow-y-auto">
-              <h2 className="text-xs font-medium text-muted-foreground mb-2">
-                Subtasks ({subtasks.length})
-              </h2>
-              <SubtaskList subtasks={subtasks} />
-            </div>
+            <Collapsible open={subtasksOpen} onOpenChange={setSubtasksOpen}>
+              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors border-t">
+                {subtasksOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                Subtasks
+                <span className="ml-auto text-[10px] font-normal">{subtasks.length}</span>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="px-3 pb-3">
+                  <SubtaskList subtasks={subtasks} />
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           )}
         </div>
 
         {/* ── Main content area ── */}
         <div className="flex flex-1 min-w-0 flex-col">
-          {isDraft || !selectedRole ? (
+          {isDraft ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              {isDraft
-                ? "Deploy the project to start agents"
-                : "Select an agent to view its terminal"}
+              Deploy the project to start agents
             </div>
           ) : (
             <>
@@ -425,23 +758,28 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
                   </button>
                 ))}
                 <span className="ml-auto text-[10px] text-muted-foreground font-mono">
-                  {terminalSessionName}
+                  {activeTab === "terminal" && terminalSessionName}
+                  {activeTab === "files" && selectedFile}
                 </span>
               </div>
 
               {/* Tab content */}
               <div className="flex-1 min-h-0 p-4">
-                {activeTab === "terminal" && terminalSessionName && (
-                  <WebTerminal
-                    key={terminalSessionName}
+                {activeTab === "terminal" && (
+                  <TerminalView
                     sessionName={terminalSessionName}
+                    selectedAgent={selectedAgent}
                   />
                 )}
-                {activeTab === "logs" && (
-                  <LogsPanel projectId={projectId} agentRole={selectedRole} />
+                {activeTab === "files" && (
+                  <FileViewer
+                    selectedFile={selectedFile}
+                    fileContent={fileContent}
+                    isLoading={fileLoading}
+                  />
                 )}
-                {activeTab === "results" && (
-                  <ResultsPanel projectId={projectId} agentRole={selectedRole} />
+                {activeTab === "tasks" && (
+                  <TaskTracker files={files} />
                 )}
               </div>
             </>

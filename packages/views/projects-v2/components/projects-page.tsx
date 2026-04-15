@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspaceStore } from "@multica/core/workspace";
+import { useWSEvent } from "@multica/core/realtime";
 import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { useNavigation } from "../../navigation";
 import { WorkspaceAvatar } from "../../workspace/workspace-avatar";
@@ -74,10 +75,19 @@ export function ProjectsV2Page() {
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["projects-v2", wsId],
     queryFn: () => api.listProjectsV2(),
+    refetchInterval: 5000,
     enabled: !!wsId,
   });
 
   const { data: runtimes = [], isLoading: runtimesLoading } = useQuery(runtimeListOptions(wsId));
+
+  // Real-time status updates via WebSocket
+  useWSEvent("project_v2:updated" as any, () => {
+    qc.invalidateQueries({ queryKey: ["projects-v2", wsId] });
+  });
+  useWSEvent("project_v2:deleted" as any, () => {
+    qc.invalidateQueries({ queryKey: ["projects-v2", wsId] });
+  });
 
   const handleCreate = async (data: CreateProjectV2Request) => {
     await api.createProjectV2(data);
