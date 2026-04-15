@@ -220,6 +220,7 @@ export function ProjectsV2Page() {
   const handleCreate = async (data: CreateProjectV2Request) => {
     await api.createProjectV2(data);
     qc.invalidateQueries({ queryKey: ["projects-v2", wsId] });
+    toast.success("Project created");
   };
 
   const handleDelete = async (id: string) => {
