@@ -302,11 +302,25 @@ function FileViewer({
   selectedFile,
   fileContent,
   isLoading,
+  projectId,
+  onContentSaved,
 }: {
   selectedFile: string | null;
   fileContent: string;
   isLoading: boolean;
+  projectId: string;
+  onContentSaved?: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Reset edit state when file changes
+  useEffect(() => {
+    setEditing(false);
+    setEditContent(fileContent);
+  }, [selectedFile, fileContent]);
+
   if (!selectedFile) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -320,28 +334,58 @@ function FileViewer({
 
   const isJson = selectedFile.endsWith(".json");
   const isMd = selectedFile.endsWith(".md");
+  const isEditable = isMd || selectedFile.endsWith(".txt") || selectedFile.endsWith(".sh");
 
   let displayContent = fileContent;
   if (isJson && fileContent) {
     try {
       displayContent = JSON.stringify(JSON.parse(fileContent), null, 2);
     } catch {
-      // already a string, use as-is
+      // already a string
     }
   }
 
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.writeProjectFile(projectId, selectedFile, editContent);
+      setEditing(false);
+      onContentSaved?.();
+      toast.success("File saved");
+    } catch {
+      toast.error("Failed to save file");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col min-h-0">
-      {/* Breadcrumb */}
-      <div className="shrink-0 flex items-center gap-1.5 px-1 pb-2 text-xs text-muted-foreground font-mono">
-        {selectedFile.split("/").map((part, i, arr) => (
-          <span key={i} className="flex items-center gap-1">
-            {i > 0 && <span className="text-muted-foreground/40">/</span>}
-            <span className={i === arr.length - 1 ? "text-foreground font-medium" : ""}>
-              {part}
+      {/* Breadcrumb + edit controls */}
+      <div className="shrink-0 flex items-center gap-1.5 px-1 pb-2 text-xs text-muted-foreground">
+        <div className="flex-1 font-mono flex items-center gap-1">
+          {selectedFile.split("/").map((part, i, arr) => (
+            <span key={i} className="flex items-center gap-1">
+              {i > 0 && <span className="text-muted-foreground/40">/</span>}
+              <span className={i === arr.length - 1 ? "text-foreground font-medium" : ""}>
+                {part}
+              </span>
             </span>
-          </span>
-        ))}
+          ))}
+        </div>
+        {isEditable && !editing && (
+          <Button variant="ghost" size="xs" onClick={() => { setEditContent(fileContent); setEditing(true); }}>
+            <Pencil className="h-3 w-3 mr-1" /> Edit
+          </Button>
+        )}
+        {editing && (
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="xs" onClick={() => setEditing(false)}>Cancel</Button>
+            <Button size="xs" onClick={handleSave} disabled={saving}>
+              {saving ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -349,6 +393,12 @@ function FileViewer({
         <div className="flex-1 flex items-center justify-center">
           <Skeleton className="h-40 w-full rounded-lg" />
         </div>
+      ) : editing ? (
+        <Textarea
+          value={editContent}
+          onChange={(e) => setEditContent(e.target.value)}
+          className="flex-1 min-h-0 resize-none font-mono text-xs"
+        />
       ) : isMd && displayContent ? (
         <div className="flex-1 overflow-auto min-h-0 rounded-lg border bg-background p-4 prose prose-sm dark:prose-invert max-w-none">
           <Markdown>{displayContent}</Markdown>
@@ -929,6 +979,13 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
                 selectedFile={selectedFile}
                 fileContent={fileContent}
                 isLoading={fileLoading}
+                projectId={projectId}
+                onContentSaved={() => {
+                  // Re-fetch file content after save
+                  if (selectedFile) {
+                    api.readProjectFile(projectId, selectedFile).then(r => setFileContent(r.content)).catch(() => {});
+                  }
+                }}
               />
             )}
             {activeTab === "tasks" && (

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -134,4 +135,50 @@ func categorizeFile(rel string) string {
 	default:
 		return "other"
 	}
+}
+
+// WriteProjectFile saves content to a file in the project directory.
+//
+// PUT /api/v2/projects/{projectId}/files/*
+func (h *Handler) WriteProjectFile(w http.ResponseWriter, r *http.Request) {
+projectID := chi.URLParam(r, "projectId")
+workspaceID := resolveWorkspaceID(r)
+if !h.projectV2Exists(r, projectID, workspaceID) {
+writeError(w, http.StatusNotFound, "project not found")
+return
+}
+
+filePath := chi.URLParam(r, "*")
+if filePath == "" {
+writeError(w, http.StatusBadRequest, "file path is required")
+return
+}
+
+var req struct {
+Content string `json:"content"`
+}
+if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+writeError(w, http.StatusBadRequest, "invalid request body")
+return
+}
+
+baseDir := filepath.Join(projectsBaseDir, projectID)
+fullPath := filepath.Join(baseDir, filePath)
+
+absBase, _ := filepath.Abs(baseDir)
+absPath, _ := filepath.Abs(fullPath)
+if !strings.HasPrefix(absPath, absBase) {
+writeError(w, http.StatusForbidden, "path traversal not allowed")
+return
+}
+
+// Ensure parent directory exists
+os.MkdirAll(filepath.Dir(fullPath), 0o755)
+
+if err := os.WriteFile(fullPath, []byte(req.Content), 0o644); err != nil {
+writeError(w, http.StatusInternalServerError, "failed to write file")
+return
+}
+
+writeJSON(w, http.StatusOK, map[string]string{"path": filePath, "status": "saved"})
 }

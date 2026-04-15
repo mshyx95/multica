@@ -967,6 +967,13 @@ export class ApiClient {
     return this.fetch(`/api/v2/projects/${projectId}/files/${filePath}`);
   }
 
+  async writeProjectFile(projectId: string, filePath: string, content: string): Promise<void> {
+    await this.fetch(`/api/v2/projects/${projectId}/files/${filePath}`, {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    });
+  }
+
   async listTmuxWindows(sessionName: string): Promise<TmuxWindow[]> {
     return this.fetch(`/api/terminal-windows/${encodeURIComponent(sessionName)}`);
   }

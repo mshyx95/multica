@@ -398,6 +398,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 					r.Get("/subtasks", h.ListSubtasks)
 					r.Get("/files", h.ListProjectFiles)
 					r.Get("/files/*", h.ReadProjectFile)
+					r.Put("/files/*", h.WriteProjectFile)
 				})
 			})
 		})
