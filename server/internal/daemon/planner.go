@@ -85,60 +85,12 @@ func (d *Daemon) startPlanner(ctx context.Context, projectID, projectName, goals
 
 // plannerMessageLoop polls for new user messages and relays them to the planner.
 // It also reads planner output and reports back to the server.
+// plannerMessageLoop is a no-op — users interact with the planner directly
+// via `tmux attach -t <session>`. The planner tmux session name is logged
+// on startup so the user (or the Web UI) can show the attach command.
 func (d *Daemon) plannerMessageLoop(ctx context.Context, deployment *ProjectDeployment) {
-	ticker := time.NewTicker(plannerPollInterval)
-	defer ticker.Stop()
-
-	var lastCapture string
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// 1. Poll server for new user messages.
-			messages, err := d.client.GetProjectMessages(ctx, deployment.ProjectID, deployment.LastSeq)
-			if err != nil {
-				d.logger.Debug("poll project messages failed", "error", err)
-				continue
-			}
-
-			// 2. Send new user messages to planner via tmux.
-			for _, msg := range messages {
-				if msg.Role == "user" && msg.Seq > deployment.LastSeq {
-					tmuxSendKeys(deployment.SessionName, plannerWindow, msg.Content)
-					deployment.LastSeq = msg.Seq
-				}
-			}
-
-			// 3. Capture planner terminal output and relay new text to server.
-			capture, err := tmuxCapture(deployment.SessionName, plannerWindow)
-			if err != nil {
-				continue
-			}
-
-			if capture != lastCapture && capture != "" {
-				newContent := capture
-				if lastCapture != "" {
-					idx := strings.LastIndex(capture, lastCapture)
-					if idx >= 0 {
-						newContent = capture[idx+len(lastCapture):]
-					}
-				}
-				newContent = strings.TrimSpace(newContent)
-
-				// Filter out shell noise — only relay substantive text
-				if newContent != "" && !isShellNoise(newContent) {
-					if err := d.client.SendProjectMessage(ctx, deployment.ProjectID, "planner", newContent, "planning"); err != nil {
-						d.logger.Debug("send project message failed", "error", err)
-					} else {
-						d.logger.Info("planner response relayed", "project_id", deployment.ProjectID, "length", len(newContent))
-					}
-				}
-				lastCapture = capture
-			}
-		}
-	}
+	// Just keep the goroutine alive to track the deployment; no message relay.
+	<-ctx.Done()
 }
 
 // projectLoop polls for projects assigned to this daemon's runtimes and manages their lifecycle.

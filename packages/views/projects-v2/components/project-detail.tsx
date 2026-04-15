@@ -1,15 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useCallback } from "react";
 import {
   ArrowLeft,
   Rocket,
   Pause,
   Play,
-  Send,
-  CheckCircle2,
-  RefreshCw,
-  Loader2,
   Trash2,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,15 +21,14 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { toast } from "sonner";
 import type {
   ProjectV2,
-  ProjectMessage,
   Subtask,
   SubtaskStatus,
-  RuntimeDevice,
 } from "@multica/core/types";
 import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { PROJECT_V2_STATUS_CONFIG } from "../config";
 import { AgentCard } from "./agent-card";
+import { WebTerminal } from "./web-terminal";
 
 const SUBTASK_STATUS_STYLES: Record<SubtaskStatus, string> = {
   pending: "text-muted-foreground bg-muted-foreground/20",
@@ -42,137 +37,6 @@ const SUBTASK_STATUS_STYLES: Record<SubtaskStatus, string> = {
   failed: "text-destructive bg-destructive/20",
   blocked: "text-orange-600 dark:text-orange-400 bg-orange-500/20",
 };
-
-// ─── Planner chat ────────────────────────────────────────────────────────
-
-function PlannerChat({
-  status,
-  messages,
-  onSend,
-  onApprove,
-  onRevise,
-  sending,
-}: {
-  status: ProjectV2["status"];
-  messages: ProjectMessage[];
-  onSend: (content: string) => void;
-  onApprove: () => void;
-  onRevise: () => void;
-  sending: boolean;
-}) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [input, setInput] = useState("");
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
-
-  const handleSend = () => {
-    const trimmed = input.trim();
-    if (!trimmed || sending) return;
-    onSend(trimmed);
-    setInput("");
-  };
-
-  const canInput = status === "planning" || status === "executing";
-  const hasPlanProposal =
-    status === "planning" &&
-    messages.some((m) => m.role === "planner" && m.content.length > 100);
-
-  return (
-    <div className="flex flex-col h-full border rounded-lg">
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.length === 0 && (
-          <p className="text-sm text-muted-foreground text-center py-8">
-            No messages yet. Start a conversation with the planner.
-          </p>
-        )}
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
-        {sending && (
-          <div className="flex justify-start">
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          </div>
-        )}
-      </div>
-
-      {/* Approve / Revise buttons */}
-      {hasPlanProposal && (
-        <div className="flex items-center gap-2 px-4 py-2 border-t bg-muted/30">
-          <span className="text-xs text-muted-foreground mr-auto">Planner proposed a plan.</span>
-          <Button size="xs" variant="outline" onClick={onRevise}>
-            <RefreshCw className="h-3 w-3" />
-            Revise
-          </Button>
-          <Button size="xs" onClick={onApprove}>
-            <CheckCircle2 className="h-3 w-3" />
-            Approve
-          </Button>
-        </div>
-      )}
-
-      {/* Input */}
-      <div className="flex items-center gap-2 p-3 border-t">
-        <input
-          type="text"
-          className="flex-1 min-w-0 rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
-          placeholder={canInput ? "Send a message to the planner…" : "Chat is disabled in this state"}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSend()}
-          disabled={!canInput || sending}
-        />
-        <Button
-          size="icon-xs"
-          onClick={handleSend}
-          disabled={!canInput || !input.trim() || sending}
-        >
-          <Send className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function MessageBubble({ message }: { message: ProjectMessage }) {
-  if (message.role === "user") {
-    return (
-      <div className="flex justify-end">
-        <div className="rounded-2xl bg-muted px-3.5 py-2 text-sm max-w-[80%] break-words">
-          {message.content}
-        </div>
-      </div>
-    );
-  }
-
-  if (message.role === "system") {
-    return (
-      <div className="flex justify-center">
-        <span className="text-xs text-muted-foreground bg-muted/50 rounded-full px-3 py-1">
-          {message.content}
-        </span>
-      </div>
-    );
-  }
-
-  // planner / orchestrator / executor / evaluator
-  return (
-    <div className="flex justify-start">
-      <div className="space-y-1 max-w-[85%]">
-        <span className="text-[10px] font-medium text-muted-foreground capitalize">
-          {message.role}{message.agent_id ? ` (${message.agent_id.slice(0, 6)})` : ""}
-        </span>
-        <div className="rounded-2xl bg-card border px-3.5 py-2 text-sm break-words whitespace-pre-wrap">
-          {message.content}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Subtask table ───────────────────────────────────────────────────────
 
@@ -227,7 +91,6 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
   const nav = useNavigation();
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
-  const [sending, setSending] = useState(false);
 
   const { data: project, isLoading: projectLoading } = useQuery({
     queryKey: ["projects-v2", projectId],
@@ -241,12 +104,6 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
     refetchInterval: 5000,
   });
 
-  const { data: messages = [] } = useQuery({
-    queryKey: ["projects-v2", projectId, "messages"],
-    queryFn: () => api.listProjectMessages(projectId),
-    refetchInterval: 3000,
-  });
-
   const { data: subtasks = [] } = useQuery({
     queryKey: ["projects-v2", projectId, "subtasks"],
     queryFn: () => api.listSubtasks(projectId),
@@ -254,37 +111,6 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
   });
 
   const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
-
-  const handleSendMessage = useCallback(async (content: string) => {
-    setSending(true);
-    try {
-      await api.sendProjectMessage(projectId, content);
-      qc.invalidateQueries({ queryKey: ["projects-v2", projectId, "messages"] });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to send message");
-    } finally {
-      setSending(false);
-    }
-  }, [projectId, qc]);
-
-  const handleApprove = useCallback(async () => {
-    try {
-      await api.sendProjectMessage(projectId, "/approve");
-      qc.invalidateQueries({ queryKey: ["projects-v2", projectId, "messages"] });
-      qc.invalidateQueries({ queryKey: ["projects-v2", projectId] });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to approve plan");
-    }
-  }, [projectId, qc]);
-
-  const handleRevise = useCallback(async () => {
-    try {
-      await api.sendProjectMessage(projectId, "/revise");
-      qc.invalidateQueries({ queryKey: ["projects-v2", projectId, "messages"] });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to request revision");
-    }
-  }, [projectId, qc]);
 
   const handleDeploy = useCallback(async (runtimeId: string) => {
     try {
@@ -397,20 +223,19 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
 
       {/* Main content */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left: Chat / log — 2/3 */}
+        {/* Left: Terminal — 2/3 */}
         <div className="flex flex-col flex-1 min-w-0 p-4" style={{ flex: "2 1 0%" }}>
           <h2 className="text-xs font-medium text-muted-foreground mb-2">
-            {project.status === "executing" ? "Execution Log" : "Planner Chat"}
+            {project.status === "draft" ? "Deploy to start planner" : "Planner Terminal"}
           </h2>
           <div className="flex-1 min-h-0">
-            <PlannerChat
-              status={project.status}
-              messages={messages}
-              onSend={handleSendMessage}
-              onApprove={handleApprove}
-              onRevise={handleRevise}
-              sending={sending}
-            />
+            {project.status !== "draft" ? (
+              <WebTerminal sessionName={`multica-${projectId.slice(0, 8)}`} />
+            ) : (
+              <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                Deploy the project to start the planner terminal
+              </div>
+            )}
           </div>
         </div>
 
