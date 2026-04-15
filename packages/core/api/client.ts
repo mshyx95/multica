@@ -964,7 +964,7 @@ export class ApiClient {
   }
 
   async readProjectFile(projectId: string, filePath: string): Promise<ProjectFileContent> {
-    return this.fetch(`/api/v2/projects/${projectId}/files/${encodeURIComponent(filePath)}`);
+    return this.fetch(`/api/v2/projects/${projectId}/files/${filePath}`);
   }
 
   async listTmuxWindows(sessionName: string): Promise<TmuxWindow[]> {
