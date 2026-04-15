@@ -786,11 +786,9 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
         <div className="ml-auto flex items-center gap-2">
           {isDraft && (
             <Popover>
-              <PopoverTrigger asChild>
-                <Button size="xs">
-                  <Rocket className="h-3 w-3" />
-                  Deploy
-                </Button>
+              <PopoverTrigger className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted">
+                <Rocket className="h-3 w-3" />
+                Deploy
               </PopoverTrigger>
               <PopoverContent className="w-64 p-2" align="end">
                 <p className="text-xs text-muted-foreground mb-2">Select runtime:</p>

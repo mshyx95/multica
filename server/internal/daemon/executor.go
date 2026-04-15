@@ -343,7 +343,7 @@ func (d *Daemon) launchCopilotInWindow(ctx context.Context, sessionName string, 
 // Unlike the old buildCopilotCmd, this does NOT include -i with a prompt
 // since the prompt is sent via task files after launch.
 func buildCopilotLaunchCmd(copilotPath, model, effort, cwd string) string {
-	cmd := fmt.Sprintf("cd %s && %s", shellEscape(cwd), copilotPath)
+	cmd := fmt.Sprintf("cd %s && %s --allow-all", shellEscape(cwd), copilotPath)
 	if model != "" {
 		cmd += fmt.Sprintf(" --model %s", model)
 	}
