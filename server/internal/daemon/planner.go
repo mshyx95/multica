@@ -52,15 +52,22 @@ func (d *Daemon) startPlanner(ctx context.Context, projectID, projectName, goals
 		return fmt.Errorf("create tmux session: %w", err)
 	}
 
-	// Build planner prompt.
+	// Build planner prompt — explicitly forbid execution, require plan file output.
+	planFile := filepath.Join(projectDir, "memories", "session", "harness-unified-plan.md")
 	prompt := fmt.Sprintf(
-		"You are a Planner agent for project '%s'. "+
-			"Read the project context at %s. "+
-			"Conduct a structured multi-round Q&A with the user to understand requirements. "+
-			"Ask at minimum 3 rounds of questions covering: goals, constraints, scope, edge cases, success criteria. "+
-			"After gathering enough information, produce a Task Requirements Document (TRD) and implementation plan. "+
-			"Present the plan and wait for user to say APPROVE or REVISE.",
-		projectName, contextFile,
+		"You are a PLANNER agent for project '%s'. "+
+			"Read the project context at %s.\n\n"+
+			"YOUR ROLE: You ONLY plan. You do NOT write code, create files, or execute commands (except reading files). "+
+			"You are NOT an executor.\n\n"+
+			"WORKFLOW:\n"+
+			"1. Conduct multi-round Q&A with the user (minimum 3 rounds) covering: goals, constraints, scope, edge cases, success criteria, number of executors, which models to use.\n"+
+			"2. After gathering requirements, produce a detailed implementation plan with numbered subtasks, file ownership, and dependencies.\n"+
+			"3. Write the plan to: %s\n"+
+			"4. Present the plan to the user and ask for APPROVE or REVISE.\n"+
+			"5. When the user says APPROVE, write EXACTLY this line on its own: <<<APPROVED>>>\n"+
+			"6. If the user says REVISE, update the plan and repeat from step 4.\n\n"+
+			"CRITICAL: When you see APPROVE, you MUST output <<<APPROVED>>> and then STOP. Do NOT start implementing.",
+		projectName, contextFile, planFile,
 	)
 
 	// Get copilot CLI path.
@@ -85,12 +92,58 @@ func (d *Daemon) startPlanner(ctx context.Context, projectID, projectName, goals
 
 // plannerMessageLoop polls for new user messages and relays them to the planner.
 // It also reads planner output and reports back to the server.
-// plannerMessageLoop is a no-op — users interact with the planner directly
-// via `tmux attach -t <session>`. The planner tmux session name is logged
-// on startup so the user (or the Web UI) can show the attach command.
+// plannerMessageLoop monitors the planner tmux session for the <<<APPROVED>>> marker.
+// When detected, it triggers the execution phase (Orchestrator + Executors + Evaluator).
 func (d *Daemon) plannerMessageLoop(ctx context.Context, deployment *ProjectDeployment) {
-	// Just keep the goroutine alive to track the deployment; no message relay.
-	<-ctx.Done()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Check for approval via plan file existence + tmux capture.
+			planPath := filepath.Join(deployment.WorkDir, "memories", "session", "harness-unified-plan.md")
+			planExists := false
+			if _, err := os.Stat(planPath); err == nil {
+				planExists = true
+			}
+
+			capture, err := tmuxCapture(deployment.SessionName, plannerWindow)
+			if err != nil {
+				continue
+			}
+
+			approved := strings.Contains(capture, "<<<APPROVED>>>") || strings.Contains(capture, "APPROVED")
+			if !approved || !planExists {
+				continue
+			}
+
+			// Both conditions met: plan file exists and APPROVED detected.
+			d.logger.Info("planner APPROVED detected, starting execution phase",
+				"project_id", deployment.ProjectID)
+
+			// Read the plan file (reuse planPath from above).
+			planContent, _ := os.ReadFile(planPath)
+
+			// Update project status to "executing" via API
+			d.client.UpdateProjectStatus(ctx, deployment.ProjectID, "executing")
+
+			// Start execution phase
+			cfg := ExecutionConfig{
+				ProjectID:    deployment.ProjectID,
+				SessionName:  deployment.SessionName,
+				ProjectDir:   deployment.WorkDir,
+				NumExecutors: 2, // TODO: read from project config
+				Plan:         string(planContent),
+			}
+			if err := d.startExecution(ctx, cfg); err != nil {
+				d.logger.Error("start execution failed", "project_id", deployment.ProjectID, "error", err)
+			}
+			return // planner's job is done
+		}
+	}
 }
 
 // projectLoop polls for projects assigned to this daemon's runtimes and manages their lifecycle.
