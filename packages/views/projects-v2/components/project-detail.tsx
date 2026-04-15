@@ -42,6 +42,7 @@ import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { PROJECT_V2_STATUS_CONFIG } from "../config";
 import { WebTerminal } from "./web-terminal";
+import { Markdown } from "@multica/ui/markdown";
 
 // ─── Agent roles definition ─────────────────────────────────────────────────
 
@@ -313,6 +314,7 @@ function FileViewer({
   }
 
   const isJson = selectedFile.endsWith(".json");
+  const isMd = selectedFile.endsWith(".md");
 
   let displayContent = fileContent;
   if (isJson && fileContent) {
@@ -341,6 +343,10 @@ function FileViewer({
       {isLoading ? (
         <div className="flex-1 flex items-center justify-center">
           <Skeleton className="h-40 w-full rounded-lg" />
+        </div>
+      ) : isMd && displayContent ? (
+        <div className="flex-1 overflow-auto min-h-0 rounded-lg border bg-background p-4 prose prose-sm dark:prose-invert max-w-none">
+          <Markdown>{displayContent}</Markdown>
         </div>
       ) : (
         <pre className="flex-1 whitespace-pre-wrap text-xs font-mono bg-muted rounded-lg p-4 overflow-auto min-h-0">
