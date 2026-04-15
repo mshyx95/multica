@@ -392,12 +392,19 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				slog.Warn("failed to unmarshal agent custom_env", "agent_id", uuidToString(agent.ID), "error", err)
 			}
 		}
+		var runtimeConfig map[string]any
+		if agent.RuntimeConfig != nil {
+			if err := json.Unmarshal(agent.RuntimeConfig, &runtimeConfig); err != nil {
+				slog.Warn("failed to unmarshal agent runtime_config", "agent_id", uuidToString(agent.ID), "error", err)
+			}
+		}
 		resp.Agent = &TaskAgentData{
-			ID:           uuidToString(agent.ID),
-			Name:         agent.Name,
-			Instructions: agent.Instructions,
-			Skills:       skills,
-			CustomEnv:    customEnv,
+			ID:            uuidToString(agent.ID),
+			Name:          agent.Name,
+			Instructions:  agent.Instructions,
+			Skills:        skills,
+			CustomEnv:     customEnv,
+			RuntimeConfig: runtimeConfig,
 		}
 	}
 

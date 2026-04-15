@@ -1039,11 +1039,19 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, taskLo
 		return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
 	}
 
+	// Prefer per-agent model from runtime_config over daemon-global default.
+	model := entry.Model
+	if task.Agent != nil && task.Agent.RuntimeConfig != nil {
+		if m, ok := task.Agent.RuntimeConfig["model"].(string); ok && m != "" {
+			model = m
+		}
+	}
+
 	reused := task.PriorWorkDir != "" && env.WorkDir == task.PriorWorkDir
 	taskLog.Info("starting agent",
 		"provider", provider,
 		"workdir", env.WorkDir,
-		"model", entry.Model,
+		"model", model,
 		"reused", reused,
 	)
 	if task.PriorSessionID != "" {
@@ -1054,7 +1062,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, taskLo
 
 	execOpts := agent.ExecOptions{
 		Cwd:             env.WorkDir,
-		Model:           entry.Model,
+		Model:           model,
 		Timeout:         d.cfg.AgentTimeout,
 		ResumeSessionID: task.PriorSessionID,
 	}

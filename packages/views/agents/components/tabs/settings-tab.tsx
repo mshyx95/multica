@@ -25,6 +25,16 @@ import { api } from "@multica/core/api";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { ActorAvatar } from "../../../common/actor-avatar";
 
+const COPILOT_MODELS = [
+  { id: "gpt-5.4", name: "GPT-5.4" },
+  { id: "gpt-5.4-mini", name: "GPT-5.4 mini" },
+  { id: "gpt-5.2", name: "GPT-5.2" },
+  { id: "claude-sonnet-4", name: "Claude Sonnet 4" },
+  { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
+  { id: "o4-mini", name: "o4-mini" },
+  { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+];
+
 export function SettingsTab({
   agent,
   runtimes,
@@ -40,6 +50,10 @@ export function SettingsTab({
   const [maxTasks, setMaxTasks] = useState(agent.max_concurrent_tasks);
   const [selectedRuntimeId, setSelectedRuntimeId] = useState(agent.runtime_id);
   const [runtimeOpen, setRuntimeOpen] = useState(false);
+  const [model, setModel] = useState(
+    (agent.runtime_config?.model as string) ?? ""
+  );
+  const [modelOpen, setModelOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const { upload, uploading } = useFileUpload(api);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -65,7 +79,8 @@ export function SettingsTab({
     description !== (agent.description ?? "") ||
     visibility !== agent.visibility ||
     maxTasks !== agent.max_concurrent_tasks ||
-    selectedRuntimeId !== agent.runtime_id;
+    selectedRuntimeId !== agent.runtime_id ||
+    model !== ((agent.runtime_config?.model as string) ?? "");
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -81,6 +96,7 @@ export function SettingsTab({
         visibility,
         max_concurrent_tasks: maxTasks,
         runtime_id: selectedRuntimeId,
+        runtime_config: { ...agent.runtime_config, model: model || undefined },
       });
       toast.success("Settings saved");
     } catch {
@@ -256,6 +272,64 @@ export function SettingsTab({
             ))}
           </PopoverContent>
         </Popover>
+      </div>
+
+      <div>
+        <Label className="text-xs text-muted-foreground">Model</Label>
+        {selectedRuntime?.provider === "copilot" ? (
+          <Popover open={modelOpen} onOpenChange={setModelOpen}>
+            <PopoverTrigger className="flex w-full items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 mt-1.5 text-left text-sm transition-colors hover:bg-muted">
+              <div className="min-w-0 flex-1">
+                <span className="truncate font-medium">
+                  {model
+                    ? (COPILOT_MODELS.find((m) => m.id === model)?.name ?? model)
+                    : "Default"}
+                </span>
+              </div>
+              <ChevronDown
+                className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${modelOpen ? "rotate-180" : ""}`}
+              />
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              className="w-[var(--anchor-width)] p-1 max-h-60 overflow-y-auto"
+            >
+              <button
+                onClick={() => {
+                  setModel("");
+                  setModelOpen(false);
+                }}
+                className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors ${
+                  !model ? "bg-accent" : "hover:bg-accent/50"
+                }`}
+              >
+                <span className="font-medium">Default</span>
+              </button>
+              {COPILOT_MODELS.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => {
+                    setModel(m.id);
+                    setModelOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors ${
+                    model === m.id ? "bg-accent" : "hover:bg-accent/50"
+                  }`}
+                >
+                  <span className="font-medium">{m.name}</span>
+                  <span className="text-xs text-muted-foreground">{m.id}</span>
+                </button>
+              ))}
+            </PopoverContent>
+          </Popover>
+        ) : (
+          <Input
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="e.g. claude-sonnet-4.5 (leave empty for default)"
+            className="mt-1"
+          />
+        )}
       </div>
 
       <Button onClick={handleSave} disabled={!dirty || saving} size="sm">

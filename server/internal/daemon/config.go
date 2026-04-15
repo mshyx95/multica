@@ -121,8 +121,15 @@ func LoadConfig(overrides Overrides) (Config, error) {
 			Model: strings.TrimSpace(os.Getenv("MULTICA_GEMINI_MODEL")),
 		}
 	}
+	copilotPath := envOrDefault("MULTICA_COPILOT_PATH", "copilot")
+	if _, err := exec.LookPath(copilotPath); err == nil {
+		agents["copilot"] = AgentEntry{
+			Path:  copilotPath,
+			Model: strings.TrimSpace(os.Getenv("MULTICA_COPILOT_MODEL")),
+		}
+	}
 	if len(agents) == 0 {
-		return Config{}, fmt.Errorf("no agent CLI found: install claude, codex, opencode, openclaw, hermes, or gemini and ensure it is on PATH")
+		return Config{}, fmt.Errorf("no agent CLI found: install claude, codex, opencode, openclaw, hermes, gemini, or copilot and ensure it is on PATH")
 	}
 
 	// Host info
