@@ -36,13 +36,13 @@ func (h *Handler) ListRuntimeProjects(w http.ResponseWriter, r *http.Request) {
 	if len(statuses) > 0 {
 		// Use ANY($2) with a text array for PostgreSQL.
 		selectSQL = `
-			SELECT id, name, COALESCE(goals, ''), COALESCE(skills, ''), status, COALESCE(config, '{}')
+			SELECT id, name, COALESCE(goals, ''), COALESCE(skills::text, '[]'), status, COALESCE(config::text, '{}')
 			FROM project_v2
 			WHERE runtime_id = $1 AND status = ANY($2)`
 		args = []any{runtimeID, statuses}
 	} else {
 		selectSQL = `
-			SELECT id, name, COALESCE(goals, ''), COALESCE(skills, ''), status, COALESCE(config, '{}')
+			SELECT id, name, COALESCE(goals, ''), COALESCE(skills::text, '[]'), status, COALESCE(config::text, '{}')
 			FROM project_v2
 			WHERE runtime_id = $1`
 		args = []any{runtimeID}

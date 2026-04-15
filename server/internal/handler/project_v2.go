@@ -74,7 +74,7 @@ type subtaskResponse struct {
 	DependsOn     *string `json:"depends_on"`
 	Result        *string `json:"result"`
 	CreatedAt     string  `json:"created_at"`
-	UpdatedAt     string  `json:"updated_at"`
+	CompletedAt   *string `json:"completed_at"`
 }
 
 // ---------------------------------------------------------------------------
@@ -115,8 +115,8 @@ func (h *Handler) CreateProjectV2(w http.ResponseWriter, r *http.Request) {
 	const insertSQL = `
 		INSERT INTO project_v2 (workspace_id, name, description, goals, skills, agent_rules, status, config, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, 'draft', $7, $8)
-		RETURNING id, workspace_id, runtime_id, name, description, goals, skills, agent_rules, status,
-		          trd_content, plan_content, config, created_by, created_at, updated_at`
+		RETURNING id, workspace_id, runtime_id, name, description, goals, skills::text, agent_rules::text, status,
+		          trd_content, plan_content, config::text, created_by, created_at, updated_at`
 
 	row := h.DB.QueryRow(r.Context(), insertSQL,
 		workspaceID, req.Name, description, goals, skills, agentRules, config, userID,
@@ -142,8 +142,8 @@ func (h *Handler) ListProjectsV2(w http.ResponseWriter, r *http.Request) {
 	workspaceID := resolveWorkspaceID(r)
 
 	const selectSQL = `
-		SELECT id, workspace_id, runtime_id, name, description, goals, skills, agent_rules, status,
-		       trd_content, plan_content, config, created_by, created_at, updated_at
+		SELECT id, workspace_id, runtime_id, name, description, goals, skills::text, agent_rules::text, status,
+		       trd_content, plan_content, config::text, created_by, created_at, updated_at
 		FROM project_v2 WHERE workspace_id = $1 ORDER BY created_at DESC`
 
 	rows, err := h.DB.Query(r.Context(), selectSQL, workspaceID)
@@ -175,8 +175,8 @@ func (h *Handler) GetProjectV2(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectId")
 
 	const selectSQL = `
-		SELECT id, workspace_id, runtime_id, name, description, goals, skills, agent_rules, status,
-		       trd_content, plan_content, config, created_by, created_at, updated_at
+		SELECT id, workspace_id, runtime_id, name, description, goals, skills::text, agent_rules::text, status,
+		       trd_content, plan_content, config::text, created_by, created_at, updated_at
 		FROM project_v2 WHERE id = $1 AND workspace_id = $2`
 
 	row := h.DB.QueryRow(r.Context(), selectSQL, projectID, workspaceID)
@@ -230,8 +230,8 @@ func (h *Handler) UpdateProjectV2(w http.ResponseWriter, r *http.Request) {
 			config       = COALESCE($11, config),
 			updated_at   = NOW()
 		WHERE id = $1 AND workspace_id = $2
-		RETURNING id, workspace_id, runtime_id, name, description, goals, skills, agent_rules, status,
-		          trd_content, plan_content, config, created_by, created_at, updated_at`
+		RETURNING id, workspace_id, runtime_id, name, description, goals, skills::text, agent_rules::text, status,
+		          trd_content, plan_content, config::text, created_by, created_at, updated_at`
 
 	row := h.DB.QueryRow(r.Context(), updateSQL,
 		projectID, workspaceID,
@@ -273,8 +273,8 @@ func (h *Handler) DeployProjectV2(w http.ResponseWriter, r *http.Request) {
 	const deploySQL = `
 		UPDATE project_v2 SET runtime_id = $3, status = 'planning', updated_at = NOW()
 		WHERE id = $1 AND workspace_id = $2
-		RETURNING id, workspace_id, runtime_id, name, description, goals, skills, agent_rules, status,
-		          trd_content, plan_content, config, created_by, created_at, updated_at`
+		RETURNING id, workspace_id, runtime_id, name, description, goals, skills::text, agent_rules::text, status,
+		          trd_content, plan_content, config::text, created_by, created_at, updated_at`
 
 	row := h.DB.QueryRow(r.Context(), deploySQL, projectID, workspaceID, req.RuntimeID)
 	p, err := scanProjectV2(row)
@@ -304,7 +304,7 @@ func (h *Handler) ListProjectAgents(w http.ResponseWriter, r *http.Request) {
 
 	const selectSQL = `
 		SELECT id, project_id, role, agent_index, tmux_window, pid, status, model,
-		       current_task, gpu_assignment, worktree_path, branch_name, token_usage,
+		       current_task, gpu_assignment, worktree_path, branch_name, token_usage::text,
 		       started_at, last_heartbeat, created_at
 		FROM project_agent WHERE project_id = $1 ORDER BY agent_index`
 
@@ -500,7 +500,7 @@ func (h *Handler) ListSubtasks(w http.ResponseWriter, r *http.Request) {
 
 	const selectSQL = `
 		SELECT id, project_id, title, description, assigned_to, status,
-		       file_ownership, depends_on, result, created_at, updated_at
+		       file_ownership::text, depends_on::text, result, created_at, completed_at
 		FROM subtask WHERE project_id = $1 ORDER BY created_at`
 
 	rows, err := h.DB.Query(r.Context(), selectSQL, projectID)
@@ -513,17 +513,21 @@ func (h *Handler) ListSubtasks(w http.ResponseWriter, r *http.Request) {
 	subtasks := []subtaskResponse{}
 	for rows.Next() {
 		var s subtaskResponse
-		var createdAt, updatedAt time.Time
+		var createdAt time.Time
+		var completedAt *time.Time
 		if err := rows.Scan(
 			&s.ID, &s.ProjectID, &s.Title, &s.Description, &s.AssignedTo,
 			&s.Status, &s.FileOwnership, &s.DependsOn, &s.Result,
-			&createdAt, &updatedAt,
+			&createdAt, &completedAt,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to scan subtask")
 			return
 		}
 		s.CreatedAt = createdAt.Format(time.RFC3339)
-		s.UpdatedAt = updatedAt.Format(time.RFC3339)
+		if completedAt != nil {
+			t := completedAt.Format(time.RFC3339)
+			s.CompletedAt = &t
+		}
 		subtasks = append(subtasks, s)
 	}
 
