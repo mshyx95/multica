@@ -1,15 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, FolderGit2, ChevronRight } from "lucide-react";
+import { Plus, FolderGit2, ChevronRight, Trash2 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspaceStore } from "@multica/core/workspace";
+import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { useNavigation } from "../../navigation";
 import { WorkspaceAvatar } from "../../workspace/workspace-avatar";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
+import { toast } from "sonner";
 import type { ProjectV2, CreateProjectV2Request } from "@multica/core/types";
 import { PROJECT_V2_STATUS_CONFIG } from "../config";
 import { CreateProjectDialog } from "./create-project-dialog";
@@ -24,20 +26,31 @@ function formatRelativeDate(date: string): string {
   return `${months}mo ago`;
 }
 
-function ProjectCard({ project }: { project: ProjectV2 }) {
+function ProjectCard({ project, onDelete }: { project: ProjectV2; onDelete: (id: string) => void }) {
   const nav = useNavigation();
   const statusCfg = PROJECT_V2_STATUS_CONFIG[project.status];
 
   return (
     <button
       onClick={() => nav.push(`/projects-v2/${project.id}`)}
-      className="flex flex-col gap-2 rounded-lg border p-4 text-left transition-colors hover:bg-muted/50"
+      className="group flex flex-col gap-2 rounded-lg border p-4 text-left transition-colors hover:bg-muted/50"
     >
       <div className="flex items-center justify-between">
         <h3 className="font-medium text-sm truncate">{project.name}</h3>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${statusCfg.color} ${statusCfg.bg}`}>
-          {statusCfg.label}
-        </span>
+        <div className="flex items-center gap-1">
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); onDelete(project.id); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onDelete(project.id); } }}
+            className="hidden group-hover:inline-flex items-center justify-center rounded p-0.5 text-destructive hover:bg-destructive/10 transition-colors"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </span>
+          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${statusCfg.color} ${statusCfg.bg}`}>
+            {statusCfg.label}
+          </span>
+        </div>
       </div>
       {project.description && (
         <p className="text-xs text-muted-foreground line-clamp-2">{project.description}</p>
@@ -64,9 +77,22 @@ export function ProjectsV2Page() {
     enabled: !!wsId,
   });
 
+  const { data: runtimes = [], isLoading: runtimesLoading } = useQuery(runtimeListOptions(wsId));
+
   const handleCreate = async (data: CreateProjectV2Request) => {
     await api.createProjectV2(data);
     qc.invalidateQueries({ queryKey: ["projects-v2", wsId] });
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this project?")) return;
+    try {
+      await api.deleteProjectV2(id);
+      qc.invalidateQueries({ queryKey: ["projects-v2", wsId] });
+      toast.success("Project deleted");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete project");
+    }
   };
 
   if (isLoading) {
@@ -119,7 +145,7 @@ export function ProjectsV2Page() {
         <div className="flex-1 overflow-y-auto p-4">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((project) => (
-              <ProjectCard key={project.id} project={project} />
+              <ProjectCard key={project.id} project={project} onDelete={handleDelete} />
             ))}
           </div>
         </div>
@@ -127,6 +153,8 @@ export function ProjectsV2Page() {
 
       {showCreate && (
         <CreateProjectDialog
+          runtimes={runtimes}
+          runtimesLoading={runtimesLoading}
           onClose={() => setShowCreate(false)}
           onCreate={handleCreate}
         />

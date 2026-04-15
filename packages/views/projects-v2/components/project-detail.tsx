@@ -10,11 +10,17 @@ import {
   CheckCircle2,
   RefreshCw,
   Loader2,
+  Trash2,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useNavigation } from "../../navigation";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@multica/ui/components/ui/popover";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { toast } from "sonner";
 import type {
@@ -22,7 +28,10 @@ import type {
   ProjectMessage,
   Subtask,
   SubtaskStatus,
+  RuntimeDevice,
 } from "@multica/core/types";
+import { runtimeListOptions } from "@multica/core/runtimes/queries";
+import { useWorkspaceId } from "@multica/core/hooks";
 import { PROJECT_V2_STATUS_CONFIG } from "../config";
 import { AgentCard } from "./agent-card";
 
@@ -217,6 +226,7 @@ function SubtaskTable({ subtasks }: { subtasks: Subtask[] }) {
 export function ProjectV2Detail({ projectId }: { projectId: string }) {
   const nav = useNavigation();
   const qc = useQueryClient();
+  const wsId = useWorkspaceId();
   const [sending, setSending] = useState(false);
 
   const { data: project, isLoading: projectLoading } = useQuery({
@@ -242,6 +252,8 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
     queryFn: () => api.listSubtasks(projectId),
     refetchInterval: 5000,
   });
+
+  const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
 
   const handleSendMessage = useCallback(async (content: string) => {
     setSending(true);
@@ -274,19 +286,15 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
     }
   }, [projectId, qc]);
 
-  const handleDeploy = useCallback(async () => {
-    if (!project?.runtime_id) {
-      toast.error("No runtime assigned. Assign a runtime first.");
-      return;
-    }
+  const handleDeploy = useCallback(async (runtimeId: string) => {
     try {
-      await api.deployProjectV2(projectId, { runtime_id: project.runtime_id });
+      await api.deployProjectV2(projectId, { runtime_id: runtimeId });
       qc.invalidateQueries({ queryKey: ["projects-v2", projectId] });
       toast.success("Project deployed");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to deploy");
     }
-  }, [projectId, project, qc]);
+  }, [projectId, qc]);
 
   const handlePauseResume = useCallback(async () => {
     if (!project) return;
@@ -299,6 +307,18 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
       toast.error(err instanceof Error ? err.message : "Failed to update status");
     }
   }, [projectId, project, qc]);
+
+  const handleDelete = useCallback(async () => {
+    if (!confirm("Delete this project?")) return;
+    try {
+      await api.deleteProjectV2(projectId);
+      qc.invalidateQueries({ queryKey: ["projects-v2"] });
+      nav.push("/projects-v2");
+      toast.success("Project deleted");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete project");
+    }
+  }, [projectId, qc, nav]);
 
   if (projectLoading || !project) {
     return (
@@ -331,10 +351,30 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
         </span>
         <div className="ml-auto flex items-center gap-2">
           {project.status === "draft" && (
-            <Button size="xs" onClick={handleDeploy}>
-              <Rocket className="h-3 w-3" />
-              Deploy
-            </Button>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button size="xs">
+                  <Rocket className="h-3 w-3" />
+                  Deploy
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 p-2" align="end">
+                <p className="text-xs text-muted-foreground mb-2">Select runtime:</p>
+                {runtimes.filter((r) => r.status === "online").length === 0 && (
+                  <p className="text-xs text-muted-foreground py-2 text-center">No online runtimes available</p>
+                )}
+                {runtimes.filter((r) => r.status === "online").map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => handleDeploy(r.id)}
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent transition-colors"
+                  >
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-success" />
+                    <span className="truncate">{r.name}</span>
+                  </button>
+                ))}
+              </PopoverContent>
+            </Popover>
           )}
           {canPauseResume && (
             <Button
@@ -349,6 +389,9 @@ export function ProjectV2Detail({ projectId }: { projectId: string }) {
               )}
             </Button>
           )}
+          <Button variant="ghost" size="icon-xs" onClick={handleDelete} className="text-destructive">
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </div>
 

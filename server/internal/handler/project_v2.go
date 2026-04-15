@@ -89,12 +89,13 @@ func (h *Handler) CreateProjectV2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name        string  `json:"name"`
-		Description *string `json:"description"`
-		Goals       *string `json:"goals"`
-		Skills      *string `json:"skills"`
-		AgentRules  *string `json:"agent_rules"`
-		Config      *string `json:"config"`
+		Name        string           `json:"name"`
+		Description *string          `json:"description"`
+		Goals       *string          `json:"goals"`
+		Skills      json.RawMessage  `json:"skills"`
+		AgentRules  json.RawMessage  `json:"agent_rules"`
+		Config      json.RawMessage  `json:"config"`
+		RuntimeID   *string          `json:"runtime_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -106,20 +107,20 @@ func (h *Handler) CreateProjectV2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Default JSONB fields to avoid NULL constraint violations
-	skills := derefOr(req.Skills, "[]")
-	agentRules := derefOr(req.AgentRules, "{}")
-	config := derefOr(req.Config, "{}")
+	skills := rawOrDefault(req.Skills, "[]")
+	agentRules := rawOrDefault(req.AgentRules, "{}")
+	config := rawOrDefault(req.Config, "{}")
 	description := derefOr(req.Description, "")
 	goals := derefOr(req.Goals, "")
 
 	const insertSQL = `
-		INSERT INTO project_v2 (workspace_id, name, description, goals, skills, agent_rules, status, config, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, 'draft', $7, $8)
+		INSERT INTO project_v2 (workspace_id, name, description, goals, skills, agent_rules, status, config, runtime_id, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, 'draft', $7, $8, $9)
 		RETURNING id, workspace_id, runtime_id, name, description, goals, skills::text, agent_rules::text, status,
 		          trd_content, plan_content, config::text, created_by, created_at, updated_at`
 
 	row := h.DB.QueryRow(r.Context(), insertSQL,
-		workspaceID, req.Name, description, goals, skills, agentRules, config, userID,
+		workspaceID, req.Name, description, goals, skills, agentRules, config, req.RuntimeID, userID,
 	)
 
 	p, err := scanProjectV2(row)
@@ -202,15 +203,15 @@ func (h *Handler) UpdateProjectV2(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectId")
 
 	var req struct {
-		Name        *string `json:"name"`
-		Description *string `json:"description"`
-		Goals       *string `json:"goals"`
-		Skills      *string `json:"skills"`
-		AgentRules  *string `json:"agent_rules"`
-		Status      *string `json:"status"`
-		TRDContent  *string `json:"trd_content"`
-		PlanContent *string `json:"plan_content"`
-		Config      *string `json:"config"`
+		Name        *string         `json:"name"`
+		Description *string         `json:"description"`
+		Goals       *string         `json:"goals"`
+		Skills      json.RawMessage `json:"skills"`
+		AgentRules  json.RawMessage `json:"agent_rules"`
+		Status      *string         `json:"status"`
+		TRDContent  *string         `json:"trd_content"`
+		PlanContent *string         `json:"plan_content"`
+		Config      json.RawMessage `json:"config"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -248,6 +249,30 @@ func (h *Handler) UpdateProjectV2(w http.ResponseWriter, r *http.Request) {
 	h.publish(protocol.EventProjectV2Updated, workspaceID, "member", userID, p)
 
 	writeJSON(w, http.StatusOK, p)
+}
+
+// ---------------------------------------------------------------------------
+// DeleteProjectV2 — DELETE /api/projects-v2/{projectId}
+// ---------------------------------------------------------------------------
+
+func (h *Handler) DeleteProjectV2(w http.ResponseWriter, r *http.Request) {
+	workspaceID := resolveWorkspaceID(r)
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	projectID := chi.URLParam(r, "projectId")
+
+	const deleteSQL = `DELETE FROM project_v2 WHERE id = $1 AND workspace_id = $2`
+	tag, err := h.DB.Exec(r.Context(), deleteSQL, projectID, workspaceID)
+	if err != nil || tag.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	h.publish(protocol.EventProjectV2Deleted, workspaceID, "member", userID, map[string]any{"project_id": projectID})
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------------------------------------------------------------------------
@@ -601,4 +626,11 @@ func derefOr(s *string, fallback string) string {
 		return fallback
 	}
 	return *s
+}
+
+func rawOrDefault(raw json.RawMessage, fallback string) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return fallback
+	}
+	return string(raw)
 }

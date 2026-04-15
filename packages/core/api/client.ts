@@ -951,4 +951,8 @@ export class ApiClient {
   async listSubtasks(projectId: string): Promise<Subtask[]> {
     return this.fetch(`/api/v2/projects/${projectId}/subtasks`);
   }
+
+  async deleteProjectV2(id: string): Promise<void> {
+    await this.fetch(`/api/v2/projects/${id}`, { method: "DELETE" });
+  }
 }

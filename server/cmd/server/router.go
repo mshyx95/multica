@@ -384,6 +384,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 				r.Route("/{projectId}", func(r chi.Router) {
 					r.Get("/", h.GetProjectV2)
 					r.Patch("/", h.UpdateProjectV2)
+					r.Delete("/", h.DeleteProjectV2)
 					r.Post("/deploy", h.DeployProjectV2)
 					r.Get("/agents", h.ListProjectAgents)
 					r.Get("/agents/{agentId}/logs", h.GetProjectAgentLogs)

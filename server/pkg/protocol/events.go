@@ -95,6 +95,7 @@ const (
 	// Project V2 events
 	EventProjectV2Created     = "project_v2:created"
 	EventProjectV2Updated     = "project_v2:updated"
+	EventProjectV2Deleted     = "project_v2:deleted"
 	EventProjectMessage       = "project:message"
 	EventProjectAgentStatus   = "project:agent_status"
 )

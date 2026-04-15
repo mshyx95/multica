@@ -72,6 +72,7 @@ export interface CreateProjectV2Request {
   skills?: unknown[];
   agent_rules?: Record<string, unknown>;
   config?: Record<string, unknown>;
+  runtime_id?: string;
 }
 
 export interface DeployProjectV2Request {

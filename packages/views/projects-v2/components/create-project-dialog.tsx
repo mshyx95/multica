@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { useState, useEffect } from "react";
+import { ChevronDown, Cloud, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -20,13 +20,18 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Label } from "@multica/ui/components/ui/label";
 import { toast } from "sonner";
-import type { CreateProjectV2Request } from "@multica/core/types";
+import type { CreateProjectV2Request, RuntimeDevice } from "@multica/core/types";
+import { ProviderLogo } from "../../runtimes/components/provider-logo";
 import { COPILOT_MODELS, EFFORT_LEVELS } from "../config";
 
 export function CreateProjectDialog({
+  runtimes,
+  runtimesLoading,
   onClose,
   onCreate,
 }: {
+  runtimes: RuntimeDevice[];
+  runtimesLoading?: boolean;
   onClose: () => void;
   onCreate: (data: CreateProjectV2Request) => Promise<void>;
 }) {
@@ -39,7 +44,16 @@ export function CreateProjectDialog({
   const [creating, setCreating] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [effortOpen, setEffortOpen] = useState(false);
+  const [selectedRuntimeId, setSelectedRuntimeId] = useState("");
+  const [runtimeOpen, setRuntimeOpen] = useState(false);
 
+  useEffect(() => {
+    if (!selectedRuntimeId && runtimes[0]) {
+      setSelectedRuntimeId(runtimes[0].id);
+    }
+  }, [runtimes, selectedRuntimeId]);
+
+  const selectedRuntime = runtimes.find((d) => d.id === selectedRuntimeId) ?? null;
   const selectedEffort = EFFORT_LEVELS.find((e) => e.id === effort);
 
   const handleSubmit = async () => {
@@ -50,6 +64,7 @@ export function CreateProjectDialog({
         name: name.trim(),
         description: description.trim() || undefined,
         goals: goals.trim() || undefined,
+        runtime_id: selectedRuntimeId || undefined,
         config: {
           num_executors: executors,
           model: model || undefined,
@@ -145,6 +160,72 @@ export function CreateProjectDialog({
                 </PopoverContent>
               </Popover>
             </div>
+          </div>
+
+          <div className="min-w-0">
+            <Label className="text-xs text-muted-foreground">Runtime</Label>
+            <Popover open={runtimeOpen} onOpenChange={setRuntimeOpen}>
+              <PopoverTrigger
+                disabled={runtimes.length === 0 && !runtimesLoading}
+                className="flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 mt-1.5 text-left text-sm transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+              >
+                {runtimesLoading ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                ) : selectedRuntime ? (
+                  <ProviderLogo provider={selectedRuntime.provider} className="h-4 w-4 shrink-0" />
+                ) : (
+                  <Cloud className="h-4 w-4 shrink-0 text-muted-foreground" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-medium">
+                      {runtimesLoading ? "Loading runtimes..." : (selectedRuntime?.name ?? "No runtime available")}
+                    </span>
+                    {selectedRuntime?.runtime_mode === "cloud" && (
+                      <span className="shrink-0 rounded bg-info/10 px-1.5 py-0.5 text-xs font-medium text-info">
+                        Cloud
+                      </span>
+                    )}
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {selectedRuntime?.device_info ?? "Register a runtime before creating a project"}
+                  </div>
+                </div>
+                <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${runtimeOpen ? "rotate-180" : ""}`} />
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-[var(--anchor-width)] p-1 max-h-60 overflow-y-auto">
+                {runtimes.map((device) => (
+                  <button
+                    key={device.id}
+                    onClick={() => {
+                      setSelectedRuntimeId(device.id);
+                      setRuntimeOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors ${
+                      device.id === selectedRuntimeId ? "bg-accent" : "hover:bg-accent/50"
+                    }`}
+                  >
+                    <ProviderLogo provider={device.provider} className="h-4 w-4 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate font-medium">{device.name}</span>
+                        {device.runtime_mode === "cloud" && (
+                          <span className="shrink-0 rounded bg-info/10 px-1.5 py-0.5 text-xs font-medium text-info">
+                            Cloud
+                          </span>
+                        )}
+                      </div>
+                      <div className="truncate text-xs text-muted-foreground">{device.device_info}</div>
+                    </div>
+                    <span
+                      className={`h-2 w-2 shrink-0 rounded-full ${
+                        device.status === "online" ? "bg-success" : "bg-muted-foreground/40"
+                      }`}
+                    />
+                  </button>
+                ))}
+              </PopoverContent>
+            </Popover>
           </div>
 
           <div>
