@@ -57,7 +57,8 @@ export type WSEventType =
   | "invitation:created"
   | "invitation:accepted"
   | "invitation:declined"
-  | "invitation:revoked";
+  | "invitation:revoked"
+  | "gpu_status_updated";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;

@@ -114,7 +114,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.heartbeatLoop(ctx)
 	go d.usageScanLoop(ctx)
 	go d.gcLoop(ctx)
+	go d.gpuLoop(ctx)
 	go d.serveHealth(ctx, healthLn, time.Now())
+	go d.projectLoop(ctx)
 	return d.pollLoop(ctx)
 }
 

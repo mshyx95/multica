@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS subtask;
+DROP TABLE IF EXISTS project_message;
+DROP TABLE IF EXISTS project_agent;
+DROP TABLE IF EXISTS project_v2;
+DROP TABLE IF EXISTS gpu_status;

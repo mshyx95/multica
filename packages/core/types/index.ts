@@ -34,6 +34,19 @@ export type { ChatSession, ChatMessage, ChatPendingTask, PendingChatTaskItem, Pe
 export type { StorageAdapter } from "./storage";
 export type { Project, ProjectStatus, ProjectPriority, CreateProjectRequest, UpdateProjectRequest, ListProjectsResponse } from "./project";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
+export type { GPUStatus } from "./gpu";
+export type {
+  ProjectV2,
+  ProjectV2Status,
+  ProjectAgentRole,
+  ProjectAgentStatus,
+  SubtaskStatus,
+  ProjectAgent,
+  ProjectMessage,
+  Subtask,
+  CreateProjectV2Request,
+  DeployProjectV2Request,
+} from "./project-v2";
 export type {
   Autopilot,
   AutopilotStatus,

@@ -143,6 +143,15 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
 
 		r.Get("/issues/{issueId}/gc-check", h.GetIssueGCCheck)
+
+		r.Post("/runtimes/{runtimeId}/gpu-status", h.ReportGPUStatus)
+
+		r.Post("/projects/{projectId}/agent-status", h.DaemonReportAgentStatus)
+
+		// Project (Planner) daemon routes
+		r.Get("/runtimes/{runtimeId}/projects", h.ListRuntimeProjects)
+		r.Get("/projects/{projectId}/messages", h.DaemonGetProjectMessages)
+		r.Post("/projects/{projectId}/messages", h.DaemonSendProjectMessage)
 	})
 
 	// Protected API routes
@@ -335,6 +344,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 					r.Post("/update", h.InitiateUpdate)
 					r.Get("/update/{updateId}", h.GetUpdate)
 					r.Delete("/", h.DeleteAgentRuntime)
+					r.Get("/gpu-status", h.GetGPUStatus)
 				})
 			})
 
@@ -365,6 +375,22 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 				r.Post("/archive-completed", h.ArchiveCompletedInbox)
 				r.Post("/{id}/read", h.MarkInboxRead)
 				r.Post("/{id}/archive", h.ArchiveInboxItem)
+			})
+
+			// Projects V2
+			r.Route("/api/projects-v2", func(r chi.Router) {
+				r.Post("/", h.CreateProjectV2)
+				r.Get("/", h.ListProjectsV2)
+				r.Route("/{projectId}", func(r chi.Router) {
+					r.Get("/", h.GetProjectV2)
+					r.Patch("/", h.UpdateProjectV2)
+					r.Post("/deploy", h.DeployProjectV2)
+					r.Get("/agents", h.ListProjectAgents)
+					r.Get("/agents/{agentId}/logs", h.GetProjectAgentLogs)
+					r.Get("/messages", h.ListProjectMessages)
+					r.Post("/messages", h.SendProjectMessage)
+					r.Get("/subtasks", h.ListSubtasks)
+				})
 			})
 		})
 	})

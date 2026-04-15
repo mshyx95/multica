@@ -27,6 +27,7 @@ import { ProviderLogo } from "./provider-logo";
 import { PingSection } from "./ping-section";
 import { UpdateSection } from "./update-section";
 import { UsageSection } from "./usage-section";
+import { GPUStatusPanel } from "./gpu-status-panel";
 
 function getCliVersion(metadata: Record<string, unknown>): string | null {
   if (
@@ -163,6 +164,14 @@ export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
             />
           </div>
         )}
+
+        {/* GPU Status */}
+        <div>
+          <h3 className="text-xs font-medium text-muted-foreground mb-3">
+            GPU Status
+          </h3>
+          <GPUStatusPanel runtimeId={runtime.id} />
+        </div>
 
         {/* Connection Test */}
         <div>

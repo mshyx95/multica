@@ -88,4 +88,13 @@ const (
 	// Daemon events
 	EventDaemonHeartbeat = "daemon:heartbeat"
 	EventDaemonRegister  = "daemon:register"
+
+	// GPU events
+	EventGPUStatusUpdated = "gpu_status:updated"
+
+	// Project V2 events
+	EventProjectV2Created     = "project_v2:created"
+	EventProjectV2Updated     = "project_v2:updated"
+	EventProjectMessage       = "project:message"
+	EventProjectAgentStatus   = "project:agent_status"
 )

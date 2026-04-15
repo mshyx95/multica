@@ -213,9 +213,23 @@ func (c *Client) GetIssueGCCheck(ctx context.Context, issueID string) (*IssueGCS
 	return &resp, nil
 }
 
+// ReportGPUStatus sends GPU status data to the server.
+func (c *Client) ReportGPUStatus(ctx context.Context, runtimeID string, statuses []GPUStatus) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/gpu-status", runtimeID), map[string]any{
+		"gpus": statuses,
+	}, nil)
+}
+
 func (c *Client) Deregister(ctx context.Context, runtimeIDs []string) error {
 	return c.postJSON(ctx, "/api/daemon/deregister", map[string]any{
 		"runtime_ids": runtimeIDs,
+	}, nil)
+}
+
+// ReportProjectAgentStatus sends agent status updates for a project to the server.
+func (c *Client) ReportProjectAgentStatus(ctx context.Context, projectID string, status map[string]string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/projects/%s/agent-status", projectID), map[string]any{
+		"agents": status,
 	}, nil)
 }
 
@@ -267,6 +281,63 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBod
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(respBody)
+}
+
+// ---------------------------------------------------------------------------
+// Project (Planner) data types
+// ---------------------------------------------------------------------------
+
+// ProjectMessageData represents a single message in a project conversation.
+type ProjectMessageData struct {
+	ID        string `json:"id"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Phase     string `json:"phase"`
+	Seq       int    `json:"seq"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ProjectData represents a project assigned to a runtime.
+type ProjectData struct {
+	ID     string         `json:"id"`
+	Name   string         `json:"name"`
+	Goals  string         `json:"goals"`
+	Skills string         `json:"skills"`
+	Status string         `json:"status"`
+	Config map[string]any `json:"config"`
+}
+
+// ---------------------------------------------------------------------------
+// Project (Planner) client methods
+// ---------------------------------------------------------------------------
+
+// GetProjectMessages fetches project messages since a given seq.
+func (c *Client) GetProjectMessages(ctx context.Context, projectID string, sinceSeq int) ([]ProjectMessageData, error) {
+	var msgs []ProjectMessageData
+	path := fmt.Sprintf("/api/daemon/projects/%s/messages?since_seq=%d", projectID, sinceSeq)
+	if err := c.getJSON(ctx, path, &msgs); err != nil {
+		return nil, err
+	}
+	return msgs, nil
+}
+
+// SendProjectMessage sends a message from an agent to the server.
+func (c *Client) SendProjectMessage(ctx context.Context, projectID, role, content, phase string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/projects/%s/messages", projectID), map[string]any{
+		"role":    role,
+		"content": content,
+		"phase":   phase,
+	}, nil)
+}
+
+// GetPendingProjects fetches projects assigned to this runtime that need attention.
+func (c *Client) GetPendingProjects(ctx context.Context, runtimeID string) ([]ProjectData, error) {
+	var projects []ProjectData
+	path := fmt.Sprintf("/api/daemon/runtimes/%s/projects?status=planning,executing", runtimeID)
+	if err := c.getJSON(ctx, path, &projects); err != nil {
+		return nil, err
+	}
+	return projects, nil
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, respBody any) error {

@@ -63,6 +63,13 @@ import type {
   ListAutopilotsResponse,
   GetAutopilotResponse,
   ListAutopilotRunsResponse,
+  GPUStatus,
+  ProjectV2,
+  CreateProjectV2Request,
+  DeployProjectV2Request,
+  ProjectAgent,
+  ProjectMessage,
+  Subtask,
 } from "../types";
 import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
@@ -438,6 +445,10 @@ export class ApiClient {
 
   async deleteRuntime(runtimeId: string): Promise<void> {
     await this.fetch(`/api/runtimes/${runtimeId}`, { method: "DELETE" });
+  }
+
+  async getGPUStatus(runtimeId: string): Promise<GPUStatus[]> {
+    return this.fetch(`/api/runtimes/${runtimeId}/gpu-status`);
   }
 
   async getRuntimeUsage(runtimeId: string, params?: { days?: number }): Promise<RuntimeUsage[]> {
@@ -886,5 +897,58 @@ export class ApiClient {
 
   async deleteAutopilotTrigger(autopilotId: string, triggerId: string): Promise<void> {
     await this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, { method: "DELETE" });
+  }
+
+  // Projects V2
+  async createProjectV2(data: CreateProjectV2Request): Promise<ProjectV2> {
+    const search = new URLSearchParams();
+    if (this.workspaceId) search.set("workspace_id", this.workspaceId);
+    return this.fetch(`/api/v2/projects?${search}`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listProjectsV2(): Promise<ProjectV2[]> {
+    return this.fetch("/api/v2/projects");
+  }
+
+  async getProjectV2(id: string): Promise<ProjectV2> {
+    return this.fetch(`/api/v2/projects/${id}`);
+  }
+
+  async updateProjectV2(id: string, data: Partial<ProjectV2>): Promise<ProjectV2> {
+    return this.fetch(`/api/v2/projects/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deployProjectV2(id: string, data: DeployProjectV2Request): Promise<ProjectV2> {
+    return this.fetch(`/api/v2/projects/${id}/deploy`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listProjectAgents(projectId: string): Promise<ProjectAgent[]> {
+    return this.fetch(`/api/v2/projects/${projectId}/agents`);
+  }
+
+  async listProjectMessages(projectId: string, sinceSeq?: number): Promise<ProjectMessage[]> {
+    const search = new URLSearchParams();
+    if (sinceSeq !== undefined) search.set("since_seq", sinceSeq.toString());
+    return this.fetch(`/api/v2/projects/${projectId}/messages?${search}`);
+  }
+
+  async sendProjectMessage(projectId: string, content: string): Promise<ProjectMessage> {
+    return this.fetch(`/api/v2/projects/${projectId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+  }
+
+  async listSubtasks(projectId: string): Promise<Subtask[]> {
+    return this.fetch(`/api/v2/projects/${projectId}/subtasks`);
   }
 }
