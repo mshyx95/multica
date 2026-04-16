@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 )
-
 const (
 	plannerPollInterval = 3 * time.Second
 	plannerWindow       = "planner"
@@ -137,16 +136,43 @@ func (d *Daemon) plannerMessageLoop(ctx context.Context, deployment *ProjectDepl
 			// Read the plan file (reuse planPath from above).
 			planContent, _ := os.ReadFile(planPath)
 
+			// Read project-context.md for injection into init files.
+			contextPath := filepath.Join(deployment.WorkDir, "memories", "session", "project-context.md")
+			projectContext, _ := os.ReadFile(contextPath)
+
+			// Read skills from the skills directory (best-effort).
+			skillsContent := loadSkillsContent(filepath.Join(multicaBaseDir, "skills"))
+
+			// Copy skills into the project directory for agent access.
+			if skillsContent != "" {
+				projSkillsDir := filepath.Join(deployment.WorkDir, "skills")
+				os.MkdirAll(projSkillsDir, 0o755)
+				srcSkillsDir := filepath.Join(multicaBaseDir, "skills")
+				if entries, err := os.ReadDir(srcSkillsDir); err == nil {
+					for _, e := range entries {
+						if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+							data, _ := os.ReadFile(filepath.Join(srcSkillsDir, e.Name()))
+							if len(data) > 0 {
+								os.WriteFile(filepath.Join(projSkillsDir, e.Name()), data, 0o644)
+							}
+						}
+					}
+				}
+			}
+
 			// Update project status to "executing" via API
 			d.client.UpdateProjectStatus(ctx, deployment.ProjectID, "executing")
 
 			// Start execution phase
 			cfg := ExecutionConfig{
-				ProjectID:    deployment.ProjectID,
-				SessionName:  deployment.SessionName,
-				ProjectDir:   deployment.WorkDir,
-				NumExecutors: 2, // TODO: read from project config
-				Plan:         string(planContent),
+				ProjectID:      deployment.ProjectID,
+				ProjectName:    deployment.ProjectID, // best available identifier
+				SessionName:    deployment.SessionName,
+				ProjectDir:     deployment.WorkDir,
+				NumExecutors:   2, // TODO: read from project config
+				Plan:           string(planContent),
+				ProjectContext: string(projectContext),
+				Skills:         skillsContent,
 			}
 			if err := d.startExecution(ctx, cfg); err != nil {
 				d.logger.Error("start execution failed", "project_id", deployment.ProjectID, "error", err)
@@ -223,4 +249,28 @@ continue
 return false
 }
 return true
+}
+
+// loadSkillsContent reads all .md files from the given directory and
+// concatenates their content. Returns empty string if dir does not exist.
+func loadSkillsContent(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var parts []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("### Skill: %s\n%s", e.Name(), string(data)))
+	}
+	if len(parts) == 0 {
+		return "(no skills loaded)"
+	}
+	return strings.Join(parts, "\n\n---\n\n")
 }
