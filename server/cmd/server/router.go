@@ -147,6 +147,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 		r.Post("/runtimes/{runtimeId}/gpu-status", h.ReportGPUStatus)
 
 		r.Post("/projects/{projectId}/agent-status", h.DaemonReportAgentStatus)
+		r.Post("/projects/{projectId}/files", h.DaemonSyncProjectFiles)
 
 		// Project (Planner) daemon routes
 		r.Get("/runtimes/{runtimeId}/projects", h.ListRuntimeProjects)

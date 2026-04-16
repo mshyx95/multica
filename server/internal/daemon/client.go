@@ -337,6 +337,24 @@ func (c *Client) UpdateProjectStatus(ctx context.Context, projectID, status stri
 	}, nil)
 }
 
+// SyncProjectFiles pushes the current file list and content to the server.
+func (c *Client) SyncProjectFiles(ctx context.Context, projectID string, files []FileEntry) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/projects/%s/files", projectID), map[string]any{
+		"files": files,
+	}, nil)
+}
+
+// FileEntry represents a file to sync to the server.
+type FileEntry struct {
+	Path     string  `json:"path"`
+	Name     string  `json:"name"`
+	Size     int64   `json:"size"`
+	IsDir    bool    `json:"is_dir"`
+	ModTime  string  `json:"mod_time"`
+	Category string  `json:"category"`
+	Content  *string `json:"content,omitempty"`
+}
+
 // GetPendingProjects fetches projects assigned to this runtime that need attention.
 func (c *Client) GetPendingProjects(ctx context.Context, runtimeID string) ([]ProjectData, error) {
 	var projects []ProjectData

@@ -231,7 +231,56 @@ func (d *Daemon) projectLoop(ctx context.Context) {
 					}
 				}
 			}
+
+			// Sync files for all active deployments
+			for _, dep := range deployments {
+				d.syncProjectFiles(ctx, dep.ProjectID)
+			}
 		}
+	}
+}
+
+// syncProjectFiles scans the project directory and pushes file metadata+content to the server.
+func (d *Daemon) syncProjectFiles(ctx context.Context, projectID string) {
+	baseDir := filepath.Join(projectsBaseDir, projectID)
+	info, err := os.Stat(baseDir)
+	if err != nil || !info.IsDir() {
+		return
+	}
+
+	var files []FileEntry
+	filepath.Walk(baseDir, func(path string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(baseDir, path)
+		if rel == "." {
+			return nil
+		}
+
+		entry := FileEntry{
+			Path:     rel,
+			Name:     fi.Name(),
+			Size:     fi.Size(),
+			IsDir:    fi.IsDir(),
+			ModTime:  fi.ModTime().Format(time.RFC3339),
+			Category: categorizeFile(rel),
+		}
+
+		// Include content for non-directory files under 1MB
+		if !fi.IsDir() && fi.Size() < 1<<20 {
+			if data, err := os.ReadFile(path); err == nil {
+				content := string(data)
+				entry.Content = &content
+			}
+		}
+
+		files = append(files, entry)
+		return nil
+	})
+
+	if err := d.client.SyncProjectFiles(ctx, projectID, files); err != nil {
+		d.logger.Debug("sync project files failed", "project_id", projectID, "error", err)
 	}
 }
 
