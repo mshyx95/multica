@@ -471,9 +471,16 @@ Now read the plan file and begin the heartbeat loop.
 	}
 	os.Chmod(monitorPath, 0o755)
 
-	// Launch the monitor in the orchestrator window background.
-	monitorCmd := fmt.Sprintf("bash %s &", monitorPath)
-	tmuxSendKeysV2(cfg.SessionName, orchestratorWindow, monitorCmd)
+	// Launch monitor as a background subprocess (not via tmux, since copilot owns the window).
+	monitorProc := exec.CommandContext(ctx, "bash", monitorPath)
+	monitorProc.Dir = baseDir
+	monitorProc.Stdout = nil
+	monitorProc.Stderr = nil
+	if err := monitorProc.Start(); err != nil {
+		d.logger.Warn("failed to start monitor script", "error", err)
+	} else {
+		go monitorProc.Wait() // reap zombie
+	}
 
 	d.logger.Info("execution phase started",
 		"project_id", cfg.ProjectID,
@@ -675,8 +682,14 @@ func (d *Daemon) monitorExecution(ctx context.Context, projectID, projectDir str
 				continue
 			}
 
+			// Normalize status values to frontend-expected values.
+			normalized := make(map[string]string, len(status))
+			for agent, s := range status {
+				normalized[agent] = normalizeAgentStatus(s)
+			}
+
 			// Report to server.
-			if err := d.client.ReportProjectAgentStatus(ctx, projectID, status); err != nil {
+			if err := d.client.ReportProjectAgentStatus(ctx, projectID, normalized); err != nil {
 				d.logger.Debug("failed to report agent status", "project_id", projectID, "error", err)
 			}
 
@@ -699,10 +712,14 @@ func (d *Daemon) monitorExecution(ctx context.Context, projectID, projectDir str
 			}
 
 			// Detect completion: check if orchestrator status is "completed".
-			if status["orchestrator"] == "completed" || status["orchestrator"] == "done" {
-				d.logger.Info("execution completed", "project_id", projectID)
-				d.client.UpdateProjectStatus(ctx, projectID, "completed")
-				return
+			orchStatus := normalized["orchestrator"]
+			if orchStatus == "stopped" {
+				rawOrch := status["orchestrator"]
+				if rawOrch == "completed" || rawOrch == "done" {
+					d.logger.Info("execution completed", "project_id", projectID)
+					d.client.UpdateProjectStatus(ctx, projectID, "completed")
+					return
+				}
 			}
 
 			// Detect emergency stop.
@@ -782,6 +799,28 @@ func atomicWriteFile(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+// normalizeAgentStatus maps daemon/monitor status values to frontend-expected values.
+// Frontend expects: idle, busy, blocked, error, stopped
+func normalizeAgentStatus(raw string) string {
+	switch strings.ToLower(raw) {
+	case "running", "busy", "working", "report_ready":
+		return "busy"
+	case "idle", "initializing":
+		return "idle"
+	case "blocked", "waiting":
+		return "blocked"
+	case "error", "failed", "emergency_stop":
+		return "error"
+	case "completed", "done", "stopped":
+		return "stopped"
+	default:
+		if strings.HasSuffix(raw, "_warn") {
+			return "busy"
+		}
+		return "idle"
+	}
 }
 
 // writeJSONFile is a convenience to marshal and atomically write a JSON file.
