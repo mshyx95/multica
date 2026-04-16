@@ -15,7 +15,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 )
 
-const projectsBaseDir = "/mnt2/yuxuanhu/multica/projects"
 
 // HealthResponse is returned by the daemon's local health endpoint.
 type HealthResponse struct {
@@ -205,7 +204,7 @@ func (d *Daemon) handleFiles(w http.ResponseWriter, r *http.Request) {
 		filePath = parts[2]
 	}
 
-	baseDir := filepath.Join(projectsBaseDir, projectID)
+	baseDir := filepath.Join(d.cfg.WorkspacesRoot, "projects", projectID)
 
 	switch action {
 	case "list":

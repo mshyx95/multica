@@ -12,7 +12,6 @@ import (
 const (
 	plannerPollInterval = 3 * time.Second
 	plannerWindow       = "planner"
-	multicaBaseDir      = "/mnt2/yuxuanhu/multica"
 )
 
 // ProjectDeployment represents an active project deployment on this runtime.
@@ -29,7 +28,7 @@ func (d *Daemon) startPlanner(ctx context.Context, projectID, projectName, goals
 	sessionName := tmuxSessionName(projectID)
 
 	// Create project directory structure.
-	projectDir := filepath.Join(multicaBaseDir, "projects", projectID)
+	projectDir := filepath.Join(d.cfg.WorkspacesRoot, "projects", projectID)
 	for _, sub := range []string{"runtime", "tasks", "memories/session"} {
 		if err := os.MkdirAll(filepath.Join(projectDir, sub), 0o755); err != nil {
 			return fmt.Errorf("create project dirs: %w", err)
@@ -144,13 +143,13 @@ func (d *Daemon) plannerMessageLoop(ctx context.Context, deployment *ProjectDepl
 			projectContext, _ := os.ReadFile(contextPath)
 
 			// Read skills from the skills directory (best-effort).
-			skillsContent := loadSkillsContent(filepath.Join(multicaBaseDir, "skills"))
+			skillsContent := loadSkillsContent(filepath.Join(d.cfg.WorkspacesRoot, "skills"))
 
 			// Copy skills into the project directory for agent access.
 			if skillsContent != "" {
 				projSkillsDir := filepath.Join(deployment.WorkDir, "skills")
 				os.MkdirAll(projSkillsDir, 0o755)
-				srcSkillsDir := filepath.Join(multicaBaseDir, "skills")
+				srcSkillsDir := filepath.Join(d.cfg.WorkspacesRoot, "skills")
 				if entries, err := os.ReadDir(srcSkillsDir); err == nil {
 					for _, e := range entries {
 						if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
@@ -225,7 +224,7 @@ func (d *Daemon) projectLoop(ctx context.Context) {
 						dep := &ProjectDeployment{
 							ProjectID:   proj.ID,
 							SessionName: tmuxSessionName(proj.ID),
-							WorkDir:     filepath.Join(multicaBaseDir, "projects", proj.ID),
+							WorkDir:     filepath.Join(d.cfg.WorkspacesRoot, "projects", proj.ID),
 							Phase:       "planning",
 						}
 						deployments[proj.ID] = dep
@@ -245,7 +244,7 @@ func (d *Daemon) projectLoop(ctx context.Context) {
 
 // syncProjectFiles scans the project directory and pushes file metadata+content to the server.
 func (d *Daemon) syncProjectFiles(ctx context.Context, projectID string) {
-	baseDir := filepath.Join(projectsBaseDir, projectID)
+	baseDir := filepath.Join(d.cfg.WorkspacesRoot, "projects", projectID)
 	info, err := os.Stat(baseDir)
 	if err != nil || !info.IsDir() {
 		return
