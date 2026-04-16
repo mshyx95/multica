@@ -463,6 +463,12 @@ Now read the plan file and begin the heartbeat loop.
 		"evaluator", evalModel,
 	)
 
+	// Start terminal relays for all agent windows.
+	for _, ag := range agents {
+		windowSession := fmt.Sprintf("%s:%s", cfg.SessionName, ag.WindowName)
+		go d.startTerminalRelay(ctx, windowSession)
+	}
+
 	// Start the monitoring goroutine.
 	go d.monitorExecution(ctx, cfg.ProjectID, baseDir)
 

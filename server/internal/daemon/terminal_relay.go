@@ -75,13 +75,26 @@ func (d *Daemon) runTerminalRelay(ctx context.Context, sessionName string) {
 
 	d.logger.Info("frontend connected, attaching to tmux", "session", sessionName)
 
+	// Parse session:window format.
+	baseSession := sessionName
+	targetWindow := ""
+	if idx := strings.Index(sessionName, ":"); idx > 0 {
+		baseSession = sessionName[:idx]
+		targetWindow = sessionName[idx+1:]
+	}
+
 	// Now attach to tmux.
-	groupedName := fmt.Sprintf("%s-relay-%d", sessionName, rand.Intn(99999))
-	args := []string{"new-session", "-d", "-t", sessionName, "-s", groupedName}
+	groupedName := fmt.Sprintf("%s-relay-%d", baseSession, rand.Intn(99999))
+	args := []string{"new-session", "-d", "-t", baseSession, "-s", groupedName}
 	if err := exec.Command("tmux", args...).Run(); err != nil {
-		d.logger.Error("relay tmux grouped session failed", "error", err, "base", sessionName)
+		d.logger.Error("relay tmux grouped session failed", "error", err, "base", baseSession)
 		conn.WriteMessage(websocket.TextMessage, []byte("Error: tmux session not found\r\n"))
 		return
+	}
+
+	// Select the target window if specified.
+	if targetWindow != "" {
+		exec.Command("tmux", "select-window", "-t", groupedName+":"+targetWindow).Run()
 	}
 
 	cmd := exec.Command("tmux", "attach-session", "-t", groupedName)
