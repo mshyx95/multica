@@ -95,7 +95,7 @@ func (d *Daemon) startPlanner(ctx context.Context, projectID, projectName, goals
 	tmuxSendKeys(sessionName, plannerWindow, cmd)
 
 	// Start terminal relay so the frontend can access this tmux session.
-	go d.startTerminalRelay(ctx, sessionName)
+	go d.startTerminalRelay(ctx, sessionName+":"+plannerWindow)
 
 	d.logger.Info("planner started", "project_id", projectID, "session", sessionName)
 	return nil

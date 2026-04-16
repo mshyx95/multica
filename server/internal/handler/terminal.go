@@ -1,18 +1,12 @@
 package handler
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"net/http"
-	"os"
-	"os/exec"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 )
@@ -22,9 +16,7 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 // TerminalWS opens a WebSocket for a terminal session.
-// If a daemon relay connection exists for this session, it bridges the
-// frontend WebSocket to the daemon's relay. Otherwise, falls back to
-// attaching a local tmux session via PTY.
+// Bridges the frontend WebSocket to the daemon's relay connection.
 //
 // GET /api/terminal/{sessionName}
 func (h *Handler) TerminalWS(w http.ResponseWriter, r *http.Request) {
@@ -41,28 +33,24 @@ func (h *Handler) TerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Try daemon relay first, with retry to handle race condition where
-	// frontend connects before daemon relay is established.
-	if h.TermRelay != nil {
-		baseSession := sessionName
-		if idx := strings.Index(sessionName, ":"); idx > 0 {
-			baseSession = sessionName[:idx]
-		}
-
-		// Try up to 10 seconds for a daemon relay to appear.
-		for i := 0; i < 20; i++ {
-			if daemonConn := h.TermRelay.Get(baseSession); daemonConn != nil {
-				slog.Info("bridging terminal via daemon relay", "session", sessionName)
-				bridgeWebSockets(conn, daemonConn)
-				return
-			}
-			time.Sleep(500 * time.Millisecond)
-		}
-		slog.Warn("no daemon relay found after timeout", "session", baseSession)
+	if h.TermRelay == nil {
+		conn.WriteMessage(websocket.TextMessage, []byte("Error: terminal relay not configured"))
+		return
 	}
 
-	// Fallback: local tmux (original behavior).
-	h.terminalLocal(conn, sessionName)
+	// Use full sessionName (including :window) as relay key.
+	// Try up to 10 seconds for a daemon relay to appear.
+	for i := 0; i < 20; i++ {
+		if daemonConn := h.TermRelay.Get(sessionName); daemonConn != nil {
+			slog.Info("bridging terminal via daemon relay", "session", sessionName)
+			bridgeWebSockets(conn, daemonConn)
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	slog.Warn("no daemon relay found after timeout", "session", sessionName)
+	conn.WriteMessage(websocket.TextMessage, []byte("Error: terminal not available (daemon relay timeout)"))
 }
 
 // bridgeWebSockets bidirectionally copies messages between two WebSocket connections.
@@ -105,96 +93,12 @@ func bridgeWebSockets(frontend, daemon *websocket.Conn) {
 	daemon.Close()
 }
 
-// terminalLocal is the original local tmux attach behavior.
-func (h *Handler) terminalLocal(conn *websocket.Conn, sessionName string) {
-	baseSession := sessionName
-	targetWindow := ""
-	if idx := strings.Index(sessionName, ":"); idx > 0 {
-		baseSession = sessionName[:idx]
-		targetWindow = sessionName[idx+1:]
-	}
-
-	groupedName := fmt.Sprintf("%s-web-%d", baseSession, rand.Intn(99999))
-	args := []string{"new-session", "-d", "-t", baseSession, "-s", groupedName}
-	if err := exec.Command("tmux", args...).Run(); err != nil {
-		slog.Error("tmux grouped session failed", "error", err, "base", baseSession)
-		conn.WriteMessage(websocket.TextMessage, []byte("Error: tmux session not found"))
-		return
-	}
-
-	if targetWindow != "" {
-		exec.Command("tmux", "select-window", "-t", groupedName+":"+targetWindow).Run()
-	}
-
-	cmd := exec.Command("tmux", "attach-session", "-t", groupedName)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		exec.Command("tmux", "kill-session", "-t", groupedName).Run()
-		slog.Error("pty start failed", "error", err, "session", groupedName)
-		conn.WriteMessage(websocket.TextMessage, []byte("Error: "+err.Error()))
-		return
-	}
-
-	pty.Setsize(ptmx, &pty.Winsize{Rows: 40, Cols: 120})
-
-	var once sync.Once
-	done := make(chan struct{})
-
-	go func() {
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := ptmx.Read(buf)
-			if err != nil {
-				once.Do(func() { close(done) })
-				return
-			}
-			if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
-				once.Do(func() { close(done) })
-				return
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			_, msg, err := conn.ReadMessage()
-			if err != nil {
-				once.Do(func() { close(done) })
-				return
-			}
-			if len(msg) > 1 && msg[0] == 1 {
-				var size struct {
-					Cols uint16 `json:"cols"`
-					Rows uint16 `json:"rows"`
-				}
-				if json.Unmarshal(msg[1:], &size) == nil && size.Cols > 0 && size.Rows > 0 {
-					pty.Setsize(ptmx, &pty.Winsize{Rows: size.Rows, Cols: size.Cols})
-				}
-				continue
-			}
-			ptmx.Write(msg)
-		}
-	}()
-
-	<-done
-	cmd.Process.Kill()
-	cmd.Wait()
-	exec.Command("tmux", "kill-session", "-t", groupedName).Run()
-}
-
 // ListTmuxWindows returns the tmux windows for a session.
+// Reads from project_agent DB table instead of local tmux commands.
 // GET /api/terminal-windows/{sessionName}
 func (h *Handler) ListTmuxWindows(w http.ResponseWriter, r *http.Request) {
 	sessionName := chi.URLParam(r, "sessionName")
 	if sessionName == "" {
-		writeJSON(w, http.StatusOK, []any{})
-		return
-	}
-
-	out, err := exec.Command("tmux", "list-windows", "-t", sessionName, "-F", "#{window_name} #{window_active}").Output()
-	if err != nil {
 		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
@@ -205,20 +109,46 @@ func (h *Handler) ListTmuxWindows(w http.ResponseWriter, r *http.Request) {
 		Status string `json:"status"`
 	}
 
+	// Find the project that uses this tmux session.
+	const findProjectSQL = `SELECT id FROM project_v2 WHERE tmux_session = $1 LIMIT 1`
+	var projectID string
+	if err := h.DB.QueryRow(r.Context(), findProjectSQL, sessionName).Scan(&projectID); err != nil {
+		// No project found — return planner as default window.
+		writeJSON(w, http.StatusOK, []windowInfo{{Name: "planner", Active: true, Status: "busy"}})
+		return
+	}
+
+	// Get agents for this project.
+	const agentsSQL = `SELECT role, agent_index, status, tmux_window FROM project_agent WHERE project_id = $1 ORDER BY role, agent_index`
+	rows, err := h.DB.Query(r.Context(), agentsSQL, projectID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, []windowInfo{{Name: "planner", Active: true, Status: "busy"}})
+		return
+	}
+	defer rows.Close()
+
 	var windows []windowInfo
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) < 1 || parts[0] == "" {
+	// Always include planner.
+	windows = append(windows, windowInfo{Name: "planner", Active: false, Status: "idle"})
+
+	for rows.Next() {
+		var role, status string
+		var agentIndex int
+		var tmuxWindow *string
+		if err := rows.Scan(&role, &agentIndex, &status, &tmuxWindow); err != nil {
 			continue
 		}
-		active := len(parts) > 1 && parts[1] == "1"
-		status := "idle"
-		capture, _ := exec.Command("tmux", "capture-pane", "-t", sessionName+":"+parts[0], "-p", "-S", "-5").Output()
-		captureStr := string(capture)
-		if strings.Contains(captureStr, "Esc to cancel") || strings.Contains(captureStr, "background /tasks") {
-			status = "busy"
+		name := role
+		if tmuxWindow != nil && *tmuxWindow != "" {
+			name = *tmuxWindow
+		} else if role == "executor" {
+			name = fmt.Sprintf("executor-%d", agentIndex)
 		}
-		windows = append(windows, windowInfo{Name: parts[0], Active: active, Status: status})
+		windows = append(windows, windowInfo{Name: name, Active: false, Status: status})
+	}
+
+	if len(windows) == 1 {
+		windows[0].Active = true
 	}
 
 	writeJSON(w, http.StatusOK, windows)
