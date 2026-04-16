@@ -40,7 +40,9 @@ func (d *Daemon) startTerminalRelay(ctx context.Context, sessionName string) {
 }
 
 // runTerminalRelay establishes one WebSocket connection to the server for
-// terminal relay and attaches to the local tmux session, relaying PTY I/O.
+// terminal relay. It waits for the frontend to connect (signaled by any
+// incoming message) before attaching to the local tmux session, avoiding
+// buffered output that causes garbled rendering.
 func (d *Daemon) runTerminalRelay(ctx context.Context, sessionName string) {
 	wsURL := d.client.baseURL
 	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
@@ -61,14 +63,24 @@ func (d *Daemon) runTerminalRelay(ctx context.Context, sessionName string) {
 	}
 	defer conn.Close()
 
-	d.logger.Info("terminal relay connected, attaching to tmux", "session", sessionName)
+	d.logger.Info("terminal relay connected, waiting for frontend", "session", sessionName)
 
-	// Create a grouped tmux session for this relay connection.
+	// Wait for the first message from the frontend (typically a resize message).
+	// This ensures we don't buffer PTY output before the frontend is ready.
+	msgType, firstMsg, err := conn.ReadMessage()
+	if err != nil {
+		d.logger.Debug("terminal relay closed before frontend connected", "session", sessionName)
+		return
+	}
+
+	d.logger.Info("frontend connected, attaching to tmux", "session", sessionName)
+
+	// Now attach to tmux.
 	groupedName := fmt.Sprintf("%s-relay-%d", sessionName, rand.Intn(99999))
 	args := []string{"new-session", "-d", "-t", sessionName, "-s", groupedName}
 	if err := exec.Command("tmux", args...).Run(); err != nil {
 		d.logger.Error("relay tmux grouped session failed", "error", err, "base", sessionName)
-		conn.WriteMessage(websocket.TextMessage, []byte("Error: tmux session not found"))
+		conn.WriteMessage(websocket.TextMessage, []byte("Error: tmux session not found\r\n"))
 		return
 	}
 
@@ -79,11 +91,26 @@ func (d *Daemon) runTerminalRelay(ctx context.Context, sessionName string) {
 	if err != nil {
 		exec.Command("tmux", "kill-session", "-t", groupedName).Run()
 		d.logger.Error("relay pty start failed", "error", err, "session", groupedName)
-		conn.WriteMessage(websocket.TextMessage, []byte("Error: "+err.Error()))
+		conn.WriteMessage(websocket.TextMessage, []byte("Error: "+err.Error()+"\r\n"))
 		return
 	}
 
-	pty.Setsize(ptmx, &pty.Winsize{Rows: 40, Cols: 120})
+	// Apply the first message (likely a resize).
+	if len(firstMsg) > 1 && firstMsg[0] == 1 {
+		var size struct {
+			Cols uint16 `json:"cols"`
+			Rows uint16 `json:"rows"`
+		}
+		if json.Unmarshal(firstMsg[1:], &size) == nil && size.Cols > 0 && size.Rows > 0 {
+			pty.Setsize(ptmx, &pty.Winsize{Rows: size.Rows, Cols: size.Cols})
+		}
+	} else {
+		pty.Setsize(ptmx, &pty.Winsize{Rows: 40, Cols: 120})
+		// If the first message was terminal input, write it.
+		if msgType == websocket.BinaryMessage || msgType == websocket.TextMessage {
+			ptmx.Write(firstMsg)
+		}
+	}
 
 	var once sync.Once
 	done := make(chan struct{})
@@ -104,7 +131,7 @@ func (d *Daemon) runTerminalRelay(ctx context.Context, sessionName string) {
 		}
 	}()
 
-	// websocket → pty (receives frontend input bridged through server)
+	// websocket → pty
 	go func() {
 		for {
 			_, msg, err := conn.ReadMessage()
