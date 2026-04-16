@@ -95,6 +95,9 @@ func (d *Daemon) startPlanner(ctx context.Context, projectID, projectName, goals
 	exec.Command("tmux", "rename-window", "-t", target, plannerWindow).Run()
 	tmuxSendKeys(sessionName, plannerWindow, cmd)
 
+	// Start terminal relay so the frontend can access this tmux session.
+	go d.startTerminalRelay(ctx, sessionName)
+
 	d.logger.Info("planner started", "project_id", projectID, "session", sessionName)
 	return nil
 }

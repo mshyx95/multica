@@ -149,6 +149,9 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 		r.Post("/projects/{projectId}/agent-status", h.DaemonReportAgentStatus)
 		r.Post("/projects/{projectId}/files", h.DaemonSyncProjectFiles)
 
+		// Terminal relay: daemon connects here to provide terminal access
+		r.Get("/terminal-relay/{sessionName}", h.DaemonTerminalRelay)
+
 		// Project (Planner) daemon routes
 		r.Get("/runtimes/{runtimeId}/projects", h.ListRuntimeProjects)
 		r.Get("/projects/{projectId}/messages", h.DaemonGetProjectMessages)
