@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/go-chi/chi/v5"
@@ -40,19 +41,24 @@ func (h *Handler) TerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Try daemon relay first.
+	// Try daemon relay first, with retry to handle race condition where
+	// frontend connects before daemon relay is established.
 	if h.TermRelay != nil {
-		// Parse base session name (strip :window suffix) to find relay.
 		baseSession := sessionName
 		if idx := strings.Index(sessionName, ":"); idx > 0 {
 			baseSession = sessionName[:idx]
 		}
 
-		if daemonConn := h.TermRelay.Get(baseSession); daemonConn != nil {
-			slog.Info("bridging terminal via daemon relay", "session", sessionName)
-			bridgeWebSockets(conn, daemonConn)
-			return
+		// Try up to 10 seconds for a daemon relay to appear.
+		for i := 0; i < 20; i++ {
+			if daemonConn := h.TermRelay.Get(baseSession); daemonConn != nil {
+				slog.Info("bridging terminal via daemon relay", "session", sessionName)
+				bridgeWebSockets(conn, daemonConn)
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
 		}
+		slog.Warn("no daemon relay found after timeout", "session", baseSession)
 	}
 
 	// Fallback: local tmux (original behavior).
