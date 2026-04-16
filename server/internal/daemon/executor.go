@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,8 +19,8 @@ const (
 	monitorInterval    = 10 * time.Second
 
 	// Timeouts for tmux agent launch sequence.
-	shellInitTimeout   = 30 * time.Second
-	copilotReadyTimeout = 120 * time.Second
+	shellInitTimeout    = 10 * time.Second
+	copilotReadyTimeout = 60 * time.Second
 )
 
 // ExecutionConfig holds the configuration for an execution phase.
@@ -432,16 +433,35 @@ Now read the plan file and begin the heartbeat loop.
 		InitFile:   orchInitFile,
 	})
 
-	// ── e) Launch agents in tmux (following all pitfalls) ──────────────
+	// ── e) Launch agents in tmux (parallel) ─────────────────────────────
+	// Create all windows first (must be sequential for tmux).
 	for _, ag := range agents {
-		if err := d.launchCopilotInWindow(ctx, cfg.SessionName, ag, copilotPath, cfg.Effort); err != nil {
-			d.logger.Warn("failed to launch agent", "window", ag.WindowName, "error", err)
-			// Continue — best effort for other agents.
+		if err := exec.Command("tmux", "new-window", "-t", cfg.SessionName, "-n", ag.WindowName).Run(); err != nil {
+			d.logger.Warn("failed to create window", "window", ag.WindowName, "error", err)
 		}
 	}
 
 	// Disable auto-rename so tmux doesn't overwrite our window names.
 	exec.Command("tmux", "set-option", "-t", cfg.SessionName, "-g", "allow-rename", "off").Run()
+
+	// Start terminal relays right after window creation (before copilot launch).
+	for _, ag := range agents {
+		windowSession := fmt.Sprintf("%s:%s", cfg.SessionName, ag.WindowName)
+		go d.startTerminalRelay(ctx, windowSession)
+	}
+
+	// Launch copilot in all windows concurrently.
+	var wg sync.WaitGroup
+	for _, ag := range agents {
+		wg.Add(1)
+		go func(ag agentLaunchInfo) {
+			defer wg.Done()
+			if err := d.launchCopilotInWindow(ctx, cfg.SessionName, ag, copilotPath, cfg.Effort); err != nil {
+				d.logger.Warn("failed to launch agent", "window", ag.WindowName, "error", err)
+			}
+		}(ag)
+	}
+	wg.Wait()
 
 	// ── f) Write and start bash monitor ────────────────────────────────
 	monitorScript := generateMonitorScript(baseDir, cfg.SessionName, cfg.NumExecutors)
@@ -463,12 +483,6 @@ Now read the plan file and begin the heartbeat loop.
 		"evaluator", evalModel,
 	)
 
-	// Start terminal relays for all agent windows.
-	for _, ag := range agents {
-		windowSession := fmt.Sprintf("%s:%s", cfg.SessionName, ag.WindowName)
-		go d.startTerminalRelay(ctx, windowSession)
-	}
-
 	// Start the monitoring goroutine.
 	go d.monitorExecution(ctx, cfg.ProjectID, baseDir)
 
@@ -481,12 +495,7 @@ Now read the plan file and begin the heartbeat loop.
 func (d *Daemon) launchCopilotInWindow(ctx context.Context, sessionName string, ag agentLaunchInfo, copilotPath, effort string) error {
 	target := fmt.Sprintf("%s:%s", sessionName, ag.WindowName)
 
-	// 1. Create tmux window (empty shell).
-	if err := exec.Command("tmux", "new-window", "-t", sessionName, "-n", ag.WindowName).Run(); err != nil {
-		return fmt.Errorf("create window %s: %w", ag.WindowName, err)
-	}
-
-	// 2. Wait for shell init — poll until bash is idle (no child processes).
+	// 1. Wait for shell init — poll until bash is idle.
 	if err := waitForShellInit(ctx, target); err != nil {
 		d.logger.Warn("shell init wait failed, proceeding anyway", "window", ag.WindowName, "error", err)
 	}
